@@ -1,4 +1,4 @@
-// Чистые функции «Захвата» (задача 1): CSV, даты, отбор записей, объединение резервных копий.
+// Чистые функции «Захвата» (задачи 1, 2): CSV, даты, отбор записей, объединение резервных копий, метки.
 // Без обращения к странице и базе — поэтому их проверяет tests.html.
 
 /** Колонки CSV — порядок фиксирован, по нему работает разбор на компьютере. */
@@ -150,6 +150,23 @@ export function normalizeEntry(e) {
     source: e.source === 'voice' ? 'voice' : 'text',
     exportedAt: Number.isFinite(e.exportedAt) ? e.exportedAt : null,
   };
+}
+
+/**
+ * Метка перед текстом: «Финансы» + «виза 500» → «Финансы: виза 500».
+ * Без метки — текст как есть; если текст уже начинается с этой метки — второй раз не добавляем.
+ */
+export function applyTag(text, tag) {
+  if (!tag) return text;
+  const prefix = tag + ': ';
+  return text.startsWith(prefix) ? text : prefix + text;
+}
+
+/** Разделить «Финансы: текст» на метку и текст (для ленты). Неизвестная метка — весь текст как есть. */
+export function splitTag(text, tags) {
+  const i = text.indexOf(': ');
+  if (i > 0 && tags.includes(text.slice(0, i))) return { tag: text.slice(0, i), rest: text.slice(i + 2) };
+  return { tag: '', rest: text };
 }
 
 /** Дописать фразу к тексту через пробел (без двойных пробелов). */

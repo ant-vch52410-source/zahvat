@@ -1,4 +1,4 @@
-/* Оформление «Захвата» (задача 1). Светлая/тёмная тема — по настройке телефона. */
+/* Оформление «Захвата» (задачи 1, 2). Светлая/тёмная тема — по настройке телефона. */
 
 :root {
   --bg: #f4f5f7;
@@ -9,6 +9,7 @@
   --accent: #1f5fa8;
   --on-accent: #ffffff;
   --accent-soft: #e3edf9;
+  --chip: #eceef2;
   --mic: #c62f2f;
   --mic-soft: #fbe6e6;
   --warn: #8a5a00;
@@ -27,6 +28,7 @@
     --accent: #5b9be6;
     --on-accent: #0b1a2c;
     --accent-soft: #1c2c40;
+    --chip: #262b33;
     --mic: #f07070;
     --mic-soft: #3a1f1f;
     --warn: #f0c060;
@@ -87,7 +89,7 @@ svg .fill { fill: currentColor; stroke: none; }
 /* ---- Ввод ---- */
 .compose {
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 12px; margin-top: 4px;
+  padding: 10px; margin-top: 4px;
 }
 textarea {
   display: block; width: 100%; min-height: 120px; max-height: 45vh; resize: vertical;
@@ -96,7 +98,26 @@ textarea {
 }
 .interim { margin: 6px 2px 0; min-height: 0; color: var(--muted); font-style: italic; }
 .interim:empty { display: none; }
-.actions { display: flex; gap: 12px; align-items: center; margin-top: 12px; }
+/* Метки: одинаковой ширины на всю строку, без рамок. Размер текста подбирает fitTags() в app.js:
+   14 px → … → 11 px; если и так не влезает — остаются только иконки (класс icons-only). */
+.tags {
+  --tag-font: 14px;
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; margin-top: 10px;
+}
+.tag {
+  min-width: 0; height: 30px; padding: 0 3px; border: 0; border-radius: 8px;
+  background: var(--chip); color: var(--muted);
+  display: flex; align-items: center; justify-content: center; gap: 3px;
+  font-size: var(--tag-font); white-space: nowrap; overflow: hidden;
+}
+/* иконка уменьшается вместе с текстом; в режиме «только иконки» — крупная */
+.tag svg { flex: none; width: calc(var(--tag-font) + 3px); height: calc(var(--tag-font) + 3px); }
+.tags.icons-only .tag svg { width: 22px; height: 22px; }
+/* выбранная — только заливкой, без жирного шрифта: ширина текста не меняется, размер не прыгает */
+.tag[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.tags.icons-only .tag span { display: none; }
+
+.actions { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
 
 .mic {
   flex: none; width: 68px; height: 68px; border-radius: 50%; border: 0;
@@ -144,6 +165,7 @@ textarea {
   display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
 }
 .entry.exported .time::after { content: " ✓"; font-size: 12px; }
+.entry .lb { color: var(--accent); font-weight: 600; }
 .empty { color: var(--muted); padding: 10px 4px; }
 
 .editor { padding: 10px 0 12px; }

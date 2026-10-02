@@ -3,6 +3,7 @@
 import {
   toCsv, csvField, parseCsv, CSV_COLUMNS, formatLocal, fileStamp, selectForExport,
   mergeEntries, normalizeEntry, joinTranscripts, appendPhrase, normalizeForSearch, isSameDay,
+  applyTag, splitTag,
 } from '../core.js';
 
 const results = [];
@@ -163,6 +164,19 @@ test('appendPhrase: без двойных пробелов', () => {
   eq(appendPhrase('раз', ' два '), 'раз два');
   eq(appendPhrase('раз ', 'два'), 'раз два');
   eq(appendPhrase('раз', ''), 'раз');
+});
+
+// ---- Метки ----
+test('Метка: «Финансы» + текст → «Финансы: текст»', () => {
+  eq(applyTag('виза 500 кальян', 'Финансы'), 'Финансы: виза 500 кальян');
+  eq(applyTag('просто текст', null), 'просто текст');
+  eq(applyTag('Идея: уже с меткой', 'Идея'), 'Идея: уже с меткой', 'без двойной метки:');
+});
+test('Метка: разбор для ленты', () => {
+  const tags = ['Финансы', 'Идея', 'Задача', 'Заметка'];
+  eq(splitTag('Финансы: мир 800 еда', tags), { tag: 'Финансы', rest: 'мир 800 еда' });
+  eq(splitTag('время: 14:00 встреча', tags), { tag: '', rest: 'время: 14:00 встреча' });
+  eq(splitTag('без метки', tags), { tag: '', rest: 'без метки' });
 });
 
 // ---- Поиск ----

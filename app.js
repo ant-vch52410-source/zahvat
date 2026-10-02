@@ -1,15 +1,16 @@
-// «Захват» — экран и действия (задача 1): ввод, лента дня, поиск, правка, выгрузка CSV, резервная копия.
+// «Захват» — экран и действия (задачи 1, 2): ввод, метки, лента дня, поиск, правка, выгрузка CSV, резервная копия.
 
 import * as db from './db.js';
 import {
   toCsv, selectForExport, mergeEntries, formatTime, formatShort, formatLocal,
-  fileStamp, isSameDay, appendPhrase, normalizeForSearch,
+  fileStamp, isSameDay, appendPhrase, normalizeForSearch, applyTag, splitTag,
 } from './core.js';
 import { Dictation } from './speech.js';
 
 const $ = (id) => document.getElementById(id);
 const ui = {
   text: $('text'), interim: $('interim'), mic: $('btnMic'), save: $('btnSave'), status: $('status'),
+  tags: $('tags'),
   btnSearch: $('btnSearch'), searchBox: $('searchBox'), search: $('search'),
   btnMenu: $('btnMenu'), menu: $('menu'), menuInfo: $('menuInfo'),
   feedTitle: $('feedTitle'), feed: $('feed'),
@@ -25,6 +26,8 @@ let draftVoice = false;    // в текущем тексте есть надик
 let editingId = null;      // какую запись сейчас правим
 let voiceBase = '';        // текст поля на момент начала сессии распознавания
 let speechError = '';      // последнее сообщение об ошибке голоса
+let selectedTag = null;    // выбранная метка («Финансы», «Идея»…) или null
+const TAGS = [...ui.tags.querySelectorAll('.tag')].map(b => b.dataset.tag);
 
 const ICON_VOICE = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" class="fill"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>';
 const ICON_TEXT = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg>';
@@ -60,6 +63,32 @@ function updateStatus() {
   ui.status.classList.toggle('box', !!speechError || !navigator.onLine);
 }
 
+// ---------------- Метки ----------------
+
+/** Выбрать метку (повторное нажатие на выбранную — снять). */
+function setTag(tag) {
+  selectedTag = tag && TAGS.includes(tag) ? tag : null;
+  for (const b of ui.tags.querySelectorAll('.tag')) {
+    b.setAttribute('aria-pressed', String(b.dataset.tag === selectedTag));
+  }
+}
+
+/**
+ * Подобрать размер текста меток: от 14 px вниз до 11 px, пока каждая надпись не влезет целиком.
+ * Не влезает и при 11 px — оставляем только иконки. Вызывается при любом изменении ширины.
+ */
+const TAG_FONT_MAX = 14, TAG_FONT_MIN = 11;
+function fitTags() {
+  const box = ui.tags;
+  const buttons = [...box.querySelectorAll('.tag')];
+  box.classList.remove('icons-only');
+  for (let size = TAG_FONT_MAX; size >= TAG_FONT_MIN; size--) {
+    box.style.setProperty('--tag-font', size + 'px');
+    if (buttons.every(b => b.scrollWidth <= b.clientWidth)) return;
+  }
+  box.classList.add('icons-only');
+}
+
 // ---------------- Черновик ----------------
 
 let draftTimer = 0;
@@ -70,14 +99,16 @@ function saveDraftSoon() {
 function saveDraftNow() {
   clearTimeout(draftTimer);
   try {
-    if (ui.text.value) localStorage.setItem(DRAFT_KEY, JSON.stringify({ text: ui.text.value, voice: draftVoice }));
+    if (ui.text.value || selectedTag) {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ text: ui.text.value, voice: draftVoice, tag: selectedTag }));
+    }
     else localStorage.removeItem(DRAFT_KEY);
   } catch { /* хранилище недоступно — не страшно, база записей отдельно */ }
 }
 function restoreDraft() {
   try {
     const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
-    if (d && d.text) { ui.text.value = d.text; draftVoice = !!d.voice; }
+    if (d) { ui.text.value = d.text || ''; draftVoice = !!d.voice; setTag(d.tag); }
   } catch { /* битый черновик — пропускаем */ }
 }
 
@@ -103,22 +134,26 @@ async function saveEntry() {
     dictation.cancel();
     if (pending) { ui.text.value = appendPhrase(ui.text.value, pending); draftVoice = true; }
   }
-  const text = ui.text.value.trim();
-  if (!text) return;
+  const raw = ui.text.value.trim();
+  if (!raw) return;
+  const tag = selectedTag;
   const now = Date.now();
   const entry = {
     id: newId(), ts: now, createdAt: now, updatedAt: now,
-    text, source: draftVoice ? 'voice' : 'text', exportedAt: null,
+    text: applyTag(raw, tag),   // «Финансы: виза 500 кальян»
+    source: draftVoice ? 'voice' : 'text', exportedAt: null,
   };
-  // Поле очищаем сразу: если начать печатать следующую запись, пока идёт запись в базу, она не пропадёт
+  // Поле и метку сбрасываем сразу: если начать следующую запись, пока идёт запись в базу, она не пропадёт
   ui.text.value = '';
   draftVoice = false;
+  setTag(null);
   updateSaveButton();
   try {
     await db.putEntry(entry);
   } catch (err) {
-    ui.text.value = ui.text.value ? text + '\n' + ui.text.value : text;   // возвращаем текст в поле
+    ui.text.value = ui.text.value ? raw + '\n' + ui.text.value : raw;   // возвращаем текст и метку
     draftVoice = entry.source === 'voice';
+    setTag(tag);
     saveDraftNow();
     updateSaveButton();
     showToast('Не удалось сохранить: ' + (err && err.message || err) + '. Текст остался в поле.');
@@ -168,7 +203,13 @@ function entryItem(e, withDate) {
   src.innerHTML = e.source === 'voice' ? ICON_VOICE : ICON_TEXT;
   const txt = document.createElement('span');
   txt.className = 'txt';
-  txt.textContent = e.text;
+  const { tag, rest } = splitTag(e.text, TAGS);
+  if (tag) {
+    const lb = document.createElement('span');
+    lb.className = 'lb';
+    lb.textContent = tag + ': ';
+    txt.append(lb, rest);
+  } else txt.textContent = e.text;
   b.append(time, src, txt);
   li.append(b);
   return li;
@@ -429,6 +470,15 @@ function wire() {
     if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); saveEntry(); }
   });
   ui.mic.addEventListener('click', () => dictation.toggle());
+  // Метки не забирают фокус у поля (клавиатура не прячется), повторное нажатие снимает выбор
+  ui.tags.addEventListener('mousedown', (ev) => { if (ev.target.closest('.tag')) ev.preventDefault(); });
+  ui.tags.addEventListener('click', (ev) => {
+    const b = ev.target.closest('.tag');
+    if (!b) return;
+    setTag(b.dataset.tag === selectedTag ? null : b.dataset.tag);
+    saveDraftSoon();
+  });
+  new ResizeObserver(fitTags).observe(ui.tags);
   // Кнопка «Сохранить» не забирает фокус у поля — клавиатура не прыгает
   ui.save.addEventListener('mousedown', (ev) => ev.preventDefault());
   ui.save.addEventListener('click', saveEntry);
