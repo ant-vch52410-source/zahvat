@@ -1,4 +1,4 @@
-// Тесты чистых функций «Захвата» (задача 1). Запуск: открыть tests/tests.html через локальный сервер.
+// Тесты чистых функций «Захвата» (задачи 1, 2). Запуск: открыть tests/tests.html через локальный сервер.
 
 import {
   toCsv, csvField, parseCsv, CSV_COLUMNS, formatLocal, fileStamp, selectForExport,
