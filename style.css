@@ -1,0 +1,197 @@
+/* Оформление «Захвата» (задача 1). Светлая/тёмная тема — по настройке телефона. */
+
+:root {
+  --bg: #f4f5f7;
+  --card: #ffffff;
+  --text: #16191d;
+  --muted: #5d6570;
+  --line: #d9dde3;
+  --accent: #1f5fa8;
+  --on-accent: #ffffff;
+  --accent-soft: #e3edf9;
+  --mic: #c62f2f;
+  --mic-soft: #fbe6e6;
+  --warn: #8a5a00;
+  --warn-soft: #fff3d6;
+  --focus: #2f7de1;
+  --radius: 12px;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111317;
+    --card: #1b1f25;
+    --text: #e8eaed;
+    --muted: #a0a7b1;
+    --line: #2e343c;
+    --accent: #5b9be6;
+    --on-accent: #0b1a2c;
+    --accent-soft: #1c2c40;
+    --mic: #f07070;
+    --mic-soft: #3a1f1f;
+    --warn: #f0c060;
+    --warn-soft: #3a2f12;
+    --focus: #7fb3f0;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+main { max-width: 560px; margin: 0 auto; padding: 0 14px 96px; }
+
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+svg .fill { fill: currentColor; stroke: none; }
+
+/* ---- Шапка ---- */
+.bar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 4px;
+  max-width: 560px; margin: 0 auto;
+  padding: calc(6px + env(safe-area-inset-top)) 8px 6px 16px;
+  background: var(--bg);
+}
+.bar h1 { flex: 1; margin: 0; font-size: 20px; font-weight: 600; }
+.icon {
+  width: 48px; height: 48px; border: 0; border-radius: 50%;
+  background: transparent; display: grid; place-items: center;
+}
+.icon[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
+
+/* ---- Меню ---- */
+.menu-wrap { position: relative; }
+.menu {
+  position: absolute; right: 0; top: 52px; width: min(300px, calc(100vw - 24px));
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 6px 0; box-shadow: 0 8px 28px rgba(0, 0, 0, .18);
+}
+.menu button {
+  display: block; width: 100%; min-height: 48px; padding: 10px 16px;
+  border: 0; background: transparent; text-align: left;
+}
+.menu button:active { background: var(--accent-soft); }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 6px 0; }
+.menu-info, .menu-note { margin: 4px 16px 6px; font-size: 14px; color: var(--muted); white-space: pre-line; }
+
+/* ---- Ввод ---- */
+.compose {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 12px; margin-top: 4px;
+}
+textarea {
+  display: block; width: 100%; min-height: 120px; max-height: 45vh; resize: vertical;
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  background: var(--bg); line-height: 1.4;
+}
+.interim { margin: 6px 2px 0; min-height: 0; color: var(--muted); font-style: italic; }
+.interim:empty { display: none; }
+.actions { display: flex; gap: 12px; align-items: center; margin-top: 12px; }
+
+.mic {
+  flex: none; width: 68px; height: 68px; border-radius: 50%; border: 0;
+  background: var(--mic-soft); color: var(--mic); display: grid; place-items: center;
+}
+.mic svg { width: 32px; height: 32px; }
+.mic.recording { background: var(--mic); color: #fff; animation: pulse 1.4s ease-out infinite; }
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(198, 47, 47, .55); }
+  100% { box-shadow: 0 0 0 18px rgba(198, 47, 47, 0); }
+}
+
+.save, .dlg-actions button {
+  min-height: 52px; padding: 0 18px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--card); font-weight: 600;
+}
+.actions .save { flex: 1; min-height: 60px; font-size: 19px; }
+.save { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.save:disabled { opacity: .45; cursor: default; }
+
+.status { margin: 10px 2px 0; font-size: 15px; color: var(--warn); }
+.status:empty { display: none; }
+.status.box { background: var(--warn-soft); border-radius: 8px; padding: 8px 10px; }
+
+/* ---- Поиск ---- */
+.search { margin-top: 12px; }
+.search input {
+  width: 100%; min-height: 48px; padding: 0 14px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+}
+
+/* ---- Лента ---- */
+.feed-title { font-size: 15px; font-weight: 600; color: var(--muted); margin: 18px 4px 6px; }
+.feed { list-style: none; margin: 0; padding: 0; }
+.feed li { border-bottom: 1px solid var(--line); }
+.entry {
+  display: flex; gap: 10px; width: 100%; min-height: 48px; padding: 10px 4px;
+  border: 0; background: transparent; text-align: left; align-items: flex-start;
+}
+.entry .time { flex: none; min-width: 46px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.entry .src { flex: none; color: var(--muted); }
+.entry .src svg { width: 18px; height: 18px; margin-top: 3px; }
+.entry .txt {
+  flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+.entry.exported .time::after { content: " ✓"; font-size: 12px; }
+.empty { color: var(--muted); padding: 10px 4px; }
+
+.editor { padding: 10px 0 12px; }
+.editor textarea { min-height: 96px; }
+.editor .row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.editor .row button {
+  min-height: 48px; padding: 0 14px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--card);
+}
+.editor .row .save { flex: 1; background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
+.editor .row .danger { color: var(--mic); }
+.editor .meta { margin-top: 6px; font-size: 13px; color: var(--muted); }
+
+/* ---- Всплывающее сообщение ---- */
+.toast {
+  position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  width: min(520px, calc(100vw - 24px));
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 10px 10px 16px; border-radius: 10px;
+  background: #23272e; color: #f1f3f5; box-shadow: 0 6px 20px rgba(0, 0, 0, .25); z-index: 20;
+}
+.toast span { flex: 1; }
+.toast button {
+  min-height: 44px; padding: 0 12px; border: 0; border-radius: 8px;
+  background: transparent; color: #8fc1ff; font-weight: 600;
+}
+
+/* ---- Окно выгрузки ---- */
+dialog {
+  width: min(440px, calc(100vw - 24px)); border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--card); color: var(--text); padding: 16px;
+}
+dialog::backdrop { background: rgba(0, 0, 0, .45); }
+dialog h2 { margin: 0 0 10px; font-size: 19px; }
+fieldset { border: 0; margin: 0; padding: 0; }
+legend { color: var(--muted); font-size: 14px; margin-bottom: 4px; }
+fieldset label { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+fieldset input { width: 22px; height: 22px; }
+.period { display: flex; gap: 10px; margin-top: 6px; }
+.period label { flex: 1; display: grid; gap: 4px; font-size: 14px; color: var(--muted); }
+.period input {
+  min-height: 44px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); color: var(--text);
+}
+.hint { color: var(--muted); font-size: 14px; }
+.dlg-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dlg-actions .ghost { border-color: transparent; color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .mic.recording { animation: none; box-shadow: 0 0 0 6px rgba(198, 47, 47, .35); }
+}

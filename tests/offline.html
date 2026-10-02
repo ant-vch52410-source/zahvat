@@ -1,0 +1,40 @@
+<!doctype html>
+<!-- Проверка работы без сети (задача 1). Шаг 1 (?phase=1, сервер работает): ставит service worker,
+     кэширует приложение и эту страницу, сохраняет запись. Шаг 2 (?phase=2, сервер остановлен):
+     страница и база должны открыться из кэша, новая запись — сохраниться. Результат — в <pre id="out">. -->
+<html lang="ru">
+<head><meta charset="utf-8"><title>Захват — офлайн</title></head>
+<body>
+<pre id="out">…</pre>
+<script type="module">
+const out = document.getElementById('out');
+const phase = new URLSearchParams(location.search).get('phase') || '1';
+const res = { phase };
+try {
+  if (phase === '1') {
+    await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    const c = await caches.open('zahvat-test');            // эту страницу тоже в кэш — для шага 2
+    await c.add('/tests/offline.html');
+    res.caches = await caches.keys();
+    res.shell = (await (await caches.open((await caches.keys()).find(k => k.startsWith('zahvat-v')))).keys()).length;
+  }
+  const db = await import('/db.js');
+  const now = Date.now();
+  await db.putEntry({ id: 'offline-' + phase, ts: now, createdAt: now, updatedAt: now,
+                      text: 'запись на шаге ' + phase, source: 'text', exportedAt: null });
+  res.entries = (await db.getAllEntries()).map(e => e.text).sort();
+  if (phase === '2') {
+    // главный экран тоже должен отдаваться из кэша
+    const page = await fetch('/');
+    res.indexFromCache = page.ok && (await page.text()).includes('<title>Захват</title>');
+    res.appJs = (await fetch('/app.js')).ok;
+  }
+  res.ok = true;
+} catch (e) { res.error = String(e); }
+out.textContent = JSON.stringify(res);
+// Для проверки без окна: результат уходит в журнал сервера-«приёмника» на порту 8766 (см. README)
+fetch('http://127.0.0.1:8766/report?' + encodeURIComponent(out.textContent), { mode: 'no-cors' }).catch(() => {});
+</script>
+</body>
+</html>

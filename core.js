@@ -1,0 +1,184 @@
+// Чистые функции «Захвата» (задача 1): CSV, даты, отбор записей, объединение резервных копий.
+// Без обращения к странице и базе — поэтому их проверяет tests.html.
+
+/** Колонки CSV — порядок фиксирован, по нему работает разбор на компьютере. */
+export const CSV_COLUMNS = ['id', 'дата_время', 'ts_utc', 'текст', 'источник', 'выгружено'];
+
+const BOM = '﻿';   // метка UTF-8: по ней Excel понимает, что файл в UTF-8 (кириллица не «ломается»)
+const SEP = ';';        // русский Excel по умолчанию делит колонки точкой с запятой
+const EOL = '\r\n';     // перевод строки Windows
+
+const pad = (n, len = 2) => String(n).padStart(len, '0');
+
+/** Местное время устройства в виде «ДД.ММ.ГГГГ ЧЧ:ММ:СС» — Excel сам распознаёт это как дату. */
+export function formatLocal(ts) {
+  if (ts == null || ts === '') return '';
+  const d = new Date(ts);
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ` +
+         `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/** Короткое время для ленты: «14:20». */
+export function formatTime(ts) {
+  const d = new Date(ts);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Короткая дата для поиска и меню: «30.09 21:15». */
+export function formatShort(ts) {
+  const d = new Date(ts);
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Метка для имени файла: «2026-10-02_1430» (только ASCII). */
+export function fileStamp(date = new Date()) {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_` +
+         `${pad(date.getHours())}${pad(date.getMinutes())}`;
+}
+
+/** Один и тот же календарный день по местному времени. */
+export function isSameDay(a, b) {
+  const x = new Date(a), y = new Date(b);
+  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
+}
+
+/**
+ * Одно поле CSV.
+ * 1) Защита от «CSV-инъекции»: текст, начинающийся с = + - @ (и табуляции/возврата каретки),
+ *    Excel может принять за формулу — ставим впереди апостроф.
+ * 2) Если в поле есть ; кавычка или перевод строки — берём в кавычки, внутренние кавычки удваиваем.
+ *    Переводы строк остаются внутри кавычек: Excel показывает их как перенос внутри ячейки.
+ */
+export function csvField(value, { guard = false } = {}) {
+  let s = value == null ? '' : String(value);
+  if (guard && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  if (/[;"\r\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+/** Строка CSV для одной записи. */
+export function csvRow(e) {
+  return [
+    csvField(e.id),
+    csvField(formatLocal(e.ts)),
+    csvField(new Date(e.ts).toISOString()),
+    csvField(e.text, { guard: true }),        // только текст пишет человек — его и защищаем
+    csvField(e.source),
+    csvField(e.exportedAt ? formatLocal(e.exportedAt) : ''),
+  ].join(SEP);
+}
+
+/** Весь файл CSV: BOM + заголовок + записи по возрастанию времени. */
+export function toCsv(entries) {
+  const sorted = [...entries].sort((a, b) => a.ts - b.ts);
+  const lines = [CSV_COLUMNS.join(SEP), ...sorted.map(csvRow)];
+  return BOM + lines.join(EOL) + EOL;
+}
+
+/**
+ * Разбор CSV обратно в строки (нужен тестам: проверить, что в каждой строке одинаковое число колонок).
+ * Понимает поля в кавычках с ; и переводами строк внутри.
+ */
+export function parseCsv(text) {
+  if (text.startsWith(BOM)) text = text.slice(1);
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') inQuotes = false;
+      else field += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === SEP) { row.push(field); field = ''; }
+    else if (c === '\r' && text[i + 1] === '\n') { row.push(field); rows.push(row); row = []; field = ''; i++; }
+    else field += c;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+/**
+ * Какие записи выгружать.
+ * mode: 'new' — ещё не выгружались; 'period' — с даты from по дату to включительно ('ГГГГ-ММ-ДД'); 'all' — все.
+ */
+export function selectForExport(entries, mode, from, to) {
+  if (mode === 'all') return [...entries];
+  if (mode === 'period') {
+    const start = from ? dayStart(from) : -Infinity;
+    const end = to ? dayStart(to) + 24 * 3600 * 1000 : Infinity;   // «по» — включительно
+    return entries.filter(e => e.ts >= start && e.ts < end);
+  }
+  return entries.filter(e => !e.exportedAt);
+}
+
+/** Начало дня 'ГГГГ-ММ-ДД' по местному времени, в мс. */
+function dayStart(isoDate) {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return new Date(y, m - 1, d).getTime();
+}
+
+/**
+ * Объединение резервной копии с базой по id, без дублей.
+ * Если запись есть и там и там — остаётся более свежая (по updatedAt).
+ * Возвращает записи, которые нужно записать в базу, и счётчики для сообщения.
+ */
+export function mergeEntries(existing, incoming) {
+  const byId = new Map(existing.map(e => [e.id, e]));
+  const toWrite = [];
+  let added = 0, updated = 0, skipped = 0;
+  for (const raw of incoming) {
+    const e = normalizeEntry(raw);
+    if (!e) { skipped++; continue; }
+    const old = byId.get(e.id);
+    if (!old) { added++; toWrite.push(e); byId.set(e.id, e); }
+    else if ((e.updatedAt || 0) > (old.updatedAt || 0)) { updated++; toWrite.push(e); byId.set(e.id, e); }
+    else skipped++;
+  }
+  return { toWrite, added, updated, skipped };
+}
+
+/** Проверка записи из файла: без id, текста или времени — не берём. */
+export function normalizeEntry(e) {
+  if (!e || typeof e.id !== 'string' || !e.id || typeof e.text !== 'string' || !Number.isFinite(e.ts)) return null;
+  return {
+    id: e.id,
+    ts: e.ts,
+    createdAt: Number.isFinite(e.createdAt) ? e.createdAt : e.ts,
+    updatedAt: Number.isFinite(e.updatedAt) ? e.updatedAt : e.ts,
+    text: e.text,
+    source: e.source === 'voice' ? 'voice' : 'text',
+    exportedAt: Number.isFinite(e.exportedAt) ? e.exportedAt : null,
+  };
+}
+
+/** Дописать фразу к тексту через пробел (без двойных пробелов). */
+export function appendPhrase(base, phrase) {
+  phrase = (phrase || '').trim();
+  if (!phrase) return base;
+  if (!base || /\s$/.test(base)) return base + phrase;
+  return base + ' ' + phrase;
+}
+
+/**
+ * Собрать текст из результатов распознавания одной сессии.
+ * Chrome на Android в режиме continuous иногда присылает «накопительные» результаты:
+ * следующий кусок уже содержит предыдущий. Тогда не дописываем, а заменяем — иначе слова задвоятся.
+ */
+export function joinTranscripts(parts) {
+  let acc = '';
+  for (const p of parts) {
+    const t = (p || '').trim();
+    if (!t) continue;
+    const a = acc.toLowerCase(), b = t.toLowerCase();
+    if (a && b.startsWith(a)) acc = t;          // новый кусок включает старый
+    else if (a.endsWith(b)) continue;           // повтор того же куска
+    else acc = appendPhrase(acc, t);
+  }
+  return acc;
+}
+
+/** Для поиска: регистр и «ё» не важны. */
+export function normalizeForSearch(s) {
+  return (s || '').toLowerCase().replace(/ё/g, 'е');
+}

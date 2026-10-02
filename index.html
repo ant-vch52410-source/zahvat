@@ -1,0 +1,95 @@
+<!doctype html>
+<!-- «Захват» (задача 1): одно поле для голоса и текста, лента дня, меню выгрузки. -->
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#1f5fa8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16191d" media="(prefers-color-scheme: dark)">
+  <meta name="description" content="Быстрые записи голосом и текстом с выгрузкой в CSV">
+  <title>Захват</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <h1>Захват</h1>
+    <button id="btnSearch" class="icon" type="button" aria-label="Поиск по записям" aria-expanded="false" aria-controls="searchBox">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>
+    </button>
+    <div class="menu-wrap">
+      <button id="btnMenu" class="icon" type="button" aria-label="Меню: выгрузка и резервная копия" aria-haspopup="menu" aria-expanded="false" aria-controls="menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.6" class="fill"/><circle cx="12" cy="12" r="1.6" class="fill"/><circle cx="12" cy="19" r="1.6" class="fill"/></svg>
+      </button>
+      <div id="menu" class="menu" role="menu" aria-label="Выгрузка и резервная копия" hidden>
+        <p id="menuInfo" class="menu-info"></p>
+        <button type="button" role="menuitem" data-act="share">Поделиться CSV</button>
+        <button type="button" role="menuitem" data-act="download">Скачать CSV</button>
+        <button type="button" role="menuitem" data-act="copy">Копировать текст</button>
+        <button type="button" role="menuitem" data-act="period">Выгрузить за период / всё…</button>
+        <button type="button" role="menuitem" data-act="undo">Отменить отметку выгрузки</button>
+        <hr>
+        <button type="button" role="menuitem" data-act="backup">Резервная копия JSON</button>
+        <button type="button" role="menuitem" data-act="restore">Восстановить из JSON</button>
+        <p class="menu-note">Данные хранятся только на этом телефоне.</p>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="compose" aria-label="Новая запись">
+      <textarea id="text" rows="4" enterkeyhint="enter" autocapitalize="sentences"
+        placeholder="Говорите или пишите: «мир 800 еда», идея, заметка…" aria-label="Текст записи"></textarea>
+      <p id="interim" class="interim" aria-live="polite"></p>
+      <div class="actions">
+        <button id="btnMic" class="mic" type="button" aria-label="Начать диктовку" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" class="fill"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/></svg>
+        </button>
+        <button id="btnSave" class="save" type="button" disabled>Сохранить</button>
+      </div>
+      <p id="status" class="status" role="status"></p>
+    </section>
+
+    <section id="searchBox" class="search" hidden>
+      <input id="search" type="search" placeholder="Поиск по всем записям" aria-label="Поиск по всем записям" autocomplete="off">
+    </section>
+
+    <h2 id="feedTitle" class="feed-title">Сегодня</h2>
+    <ul id="feed" class="feed"></ul>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden>
+    <span id="toastText"></span>
+    <button id="toastAction" type="button" hidden></button>
+  </div>
+
+  <dialog id="exportDlg" aria-labelledby="exportTitle">
+    <form method="dialog" id="exportForm">
+      <h2 id="exportTitle">Выгрузка CSV</h2>
+      <fieldset>
+        <legend>Какие записи</legend>
+        <label><input type="radio" name="mode" value="new"> Только новые</label>
+        <label><input type="radio" name="mode" value="period" checked> За период</label>
+        <label><input type="radio" name="mode" value="all"> Всё</label>
+      </fieldset>
+      <div id="periodBox" class="period">
+        <label>С <input type="date" name="from"></label>
+        <label>По <input type="date" name="to"></label>
+      </div>
+      <p id="exportCount" class="hint"></p>
+      <div class="dlg-actions">
+        <button type="submit" value="share" class="save">Поделиться</button>
+        <button type="submit" value="download">Скачать</button>
+        <button type="submit" value="copy">Копировать</button>
+        <button type="submit" value="cancel" class="ghost">Закрыть</button>
+      </div>
+    </form>
+  </dialog>
+
+  <input id="fileRestore" type="file" accept=".json,application/json" hidden>
+</body>
+</html>
