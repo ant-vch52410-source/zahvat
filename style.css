@@ -1,4 +1,4 @@
-/* Оформление «Захвата» (задачи 1, 2). Светлая/тёмная тема — по настройке телефона. */
+/* Оформление «Захвата» (задачи 1, 2, 3). Светлая/тёмная тема — по настройке телефона. */
 
 :root {
   --bg: #f4f5f7;
@@ -77,6 +77,7 @@ svg .fill { fill: currentColor; stroke: none; }
   position: absolute; right: 0; top: 52px; width: min(300px, calc(100vw - 24px));
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 6px 0; box-shadow: 0 8px 28px rgba(0, 0, 0, .18);
+  max-height: calc(100dvh - 64px); overflow-y: auto;   /* на низком экране меню прокручивается */
 }
 .menu button {
   display: block; width: 100%; min-height: 48px; padding: 10px 16px;
@@ -86,44 +87,44 @@ svg .fill { fill: currentColor; stroke: none; }
 .menu hr { border: 0; border-top: 1px solid var(--line); margin: 6px 0; }
 .menu-info, .menu-note { margin: 4px 16px 6px; font-size: 14px; color: var(--muted); white-space: pre-line; }
 
-/* ---- Ввод ---- */
-.compose {
-  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 10px; margin-top: 4px;
-}
-textarea {
-  display: block; width: 100%; min-height: 120px; max-height: 45vh; resize: vertical;
-  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
-  background: var(--bg); line-height: 1.4;
-}
-.interim { margin: 6px 2px 0; min-height: 0; color: var(--muted); font-style: italic; }
-.interim:empty { display: none; }
-/* Метки: одинаковой ширины на всю строку, без рамок. Размер текста подбирает fitTags() в app.js:
-   14 px → … → 11 px; если и так не влезает — остаются только иконки (класс icons-only). */
-.tags {
-  --tag-font: 14px;
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; margin-top: 10px;
-}
-.tag {
-  min-width: 0; height: 30px; padding: 0 3px; border: 0; border-radius: 8px;
-  background: var(--chip); color: var(--muted);
-  display: flex; align-items: center; justify-content: center; gap: 3px;
-  font-size: var(--tag-font); white-space: nowrap; overflow: hidden;
-}
-/* иконка уменьшается вместе с текстом; в режиме «только иконки» — крупная */
-.tag svg { flex: none; width: calc(var(--tag-font) + 3px); height: calc(var(--tag-font) + 3px); }
-.tags.icons-only .tag svg { width: 22px; height: 22px; }
-/* выбранная — только заливкой, без жирного шрифта: ширина текста не меняется, размер не прыгает */
-.tag[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
-.tags.icons-only .tag span { display: none; }
+/* ---- Главный экран (задача 3): всё на одном экране без прокрутки, последние записи занимают остаток ---- */
+.home { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+.home main { flex: 1; min-height: 0; width: 100%; display: flex; flex-direction: column; padding: 0 12px 8px; }
+.home .bar { position: static; flex: none; width: 100%; padding: calc(2px + env(safe-area-inset-top)) 4px 2px 12px; }
+.home .compose { margin-top: 4px; }
+.dash { flex: none; border: 0; border-top: 1px dashed var(--line); margin: 8px 0; }
 
-.actions { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
+/* ---- Ввод ---- */
+.compose { flex: none; }
+textarea {
+  display: block; width: 100%; resize: none;
+  border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px;
+  background: var(--card); line-height: 1.4;
+}
+.compose textarea { height: 64px; }
+.interim { margin: 4px 2px 0; color: var(--muted); font-style: italic; font-size: 15px; }
+.interim:empty { display: none; }
+
+.controls { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+.side { flex: 1; min-width: 0; }
+/* Метки — только иконки, без рамок, распределены по ширине; выбранная — заливкой */
+.tags { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.tag {
+  height: 32px; padding: 0; border: 0; border-radius: 8px;
+  background: transparent; color: var(--muted); display: grid; place-items: center;
+}
+.tag[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+/* «Стереть» — четверть ширины, «Сохранить» — остальное */
+.actions { display: grid; grid-template-columns: 1fr 3fr; gap: 6px; margin-top: 4px; }
+.actions button { height: 40px; padding: 0; border-radius: 10px; font-weight: 600; }
+.clear { border: 1px solid var(--line); background: var(--card); font-size: 14px; }
+.actions .save { font-size: 17px; }
 
 .mic {
-  flex: none; width: 68px; height: 68px; border-radius: 50%; border: 0;
+  flex: none; width: 60px; height: 60px; border-radius: 50%; border: 0;
   background: var(--mic-soft); color: var(--mic); display: grid; place-items: center;
 }
-.mic svg { width: 32px; height: 32px; }
+.mic svg { width: 30px; height: 30px; }
 .mic.recording { background: var(--mic); color: #fff; animation: pulse 1.4s ease-out infinite; }
 @keyframes pulse {
   0%   { box-shadow: 0 0 0 0 rgba(198, 47, 47, .55); }
@@ -134,23 +135,58 @@ textarea {
   min-height: 52px; padding: 0 18px; border-radius: 10px;
   border: 1px solid var(--line); background: var(--card); font-weight: 600;
 }
-.actions .save { flex: 1; min-height: 60px; font-size: 19px; }
+.actions .save { min-height: 0; }
 .save { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .save:disabled { opacity: .45; cursor: default; }
 
-.status { margin: 10px 2px 0; font-size: 15px; color: var(--warn); }
+.status { margin: 6px 2px 0; font-size: 14px; color: var(--warn); }
 .status:empty { display: none; }
-.status.box { background: var(--warn-soft); border-radius: 8px; padding: 8px 10px; }
+.status.box { background: var(--warn-soft); border-radius: 8px; padding: 6px 10px; }
+
+/* ---- Расход кнопками: слева сумма, счета, клавиатура; справа статьи столбиком той же высоты ---- */
+.fin { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.amount {
+  display: flex; align-items: center; justify-content: flex-end; height: 40px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+  font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; overflow: hidden; white-space: nowrap;
+}
+.amount.empty { color: var(--muted); font-weight: 400; }
+.accounts { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin: 6px 0; }
+.pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.pad button, .accounts button, .cats button {
+  border: 1px solid var(--line); background: var(--card); border-radius: 9px; padding: 0;
+}
+.pad button { height: 36px; font-size: 19px; display: grid; place-items: center; }
+.pad button:active { background: var(--accent-soft); }
+.accounts button { height: 32px; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cats { display: grid; grid-auto-rows: 24px; gap: 3px; align-content: start; }
+.cats button {
+  font-size: 14px; line-height: 1; text-align: left; padding: 0 10px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.accounts button[aria-pressed="true"], .cats button[aria-pressed="true"] {
+  background: var(--accent-soft); color: var(--accent); border-color: var(--accent);
+}
+
+/* ---- Последние записи за сегодня: по одной строке, сколько влезет ---- */
+.recent { flex: 1; min-height: 0; overflow: hidden; list-style: none; margin: 0; padding: 0; }
+.recent li + li { border-top: 1px solid var(--line); }
+.recent button {
+  display: block; width: 100%; padding: 6px 2px; border: 0; background: transparent; text-align: left;
+  font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.recent .time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
+.recent .lb { color: var(--accent); font-weight: 600; }
+.recent .empty { padding: 6px 2px; font-size: 15px; }
 
 /* ---- Поиск ---- */
-.search { margin-top: 12px; }
+.search { margin-top: 4px; }
 .search input {
   width: 100%; min-height: 48px; padding: 0 14px;
   border: 1px solid var(--line); border-radius: 10px; background: var(--card);
 }
 
 /* ---- Лента ---- */
-.feed-title { font-size: 15px; font-weight: 600; color: var(--muted); margin: 18px 4px 6px; }
 .feed { list-style: none; margin: 0; padding: 0; }
 .feed li { border-bottom: 1px solid var(--line); }
 .entry {

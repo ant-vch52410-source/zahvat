@@ -1,9 +1,9 @@
-// Тесты чистых функций «Захвата» (задачи 1, 2). Запуск: открыть tests/tests.html через локальный сервер.
+// Тесты чистых функций «Захвата» (задачи 1, 2, 3). Запуск: открыть tests/tests.html через локальный сервер.
 
 import {
   toCsv, csvField, parseCsv, CSV_COLUMNS, formatLocal, fileStamp, selectForExport,
   mergeEntries, normalizeEntry, joinTranscripts, appendPhrase, normalizeForSearch, isSameDay,
-  applyTag, splitTag,
+  applyTag, splitTag, parseLists, typeAmount, formatAmount, financeText,
 } from '../core.js';
 
 const results = [];
@@ -177,6 +177,36 @@ test('Метка: разбор для ленты', () => {
   eq(splitTag('Финансы: мир 800 еда', tags), { tag: 'Финансы', rest: 'мир 800 еда' });
   eq(splitTag('время: 14:00 встреча', tags), { tag: '', rest: 'время: 14:00 встреча' });
   eq(splitTag('без метки', tags), { tag: '', rest: 'без метки' });
+});
+
+// ---- Расходы кнопками (задача 3) ----
+test('Списки: разделы [Счета] и [Статьи], порядок сохраняется', () => {
+  const r = parseLists('﻿# из модуля Финансов\r\n[Счета]\r\nМир\r\nВиза\r\n\r\n[Статьи]\r\nПродукты\r\nБензин\r\nПродукты\r\n');
+  eq(r.accounts, ['Мир', 'Виза']);
+  eq(r.cats, ['Продукты', 'Бензин'], 'повтор убран:');
+  ok(!r.error, 'не должно быть ошибки');
+});
+test('Списки: без раздела — ошибка', () => {
+  ok(parseLists('[Счета]\nМир').error, 'нет статей — ошибка');
+  ok(parseLists('просто текст').error, 'нет разделов — ошибка');
+});
+test('Сумма: набор цифр, запятая, стирание', () => {
+  const type = (keys) => keys.reduce(typeAmount, '');
+  eq(type(['8', '0', '0']), '800');
+  eq(type(['0', '5']), '5', 'ведущий ноль:');
+  eq(type([',', '5']), '0,5', 'запятая первой:');
+  eq(type(['1', ',', ',', '2', '3', '4']), '1,23', 'одна запятая, 2 знака:');
+  eq(type(['1', '2', '⌫']), '1');
+  eq(type(Array(12).fill('9')), '999999999', 'не больше 9 цифр:');
+});
+test('Сумма на экране: пробелы между тысячами', () => {
+  eq(formatAmount('12500,5'), '12 500,5');
+  eq(formatAmount(''), '0');
+});
+test('Расход: текст как голосом', () => {
+  eq(applyTag(financeText({ account: 'Мир', amount: '800', cat: 'Продукты', note: 'Пятёрочка у дома' }), 'Финансы'),
+    'Финансы: мир 800 продукты, Пятёрочка у дома');
+  eq(financeText({ account: 'Виза', amount: '2500,', cat: null, note: '' }), 'виза 2500', 'без статьи, висячая запятая:');
 });
 
 // ---- Поиск ----

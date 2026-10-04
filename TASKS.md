@@ -11,6 +11,9 @@
   - → README.md
 - ✅ 2. Метки над микрофоном — Финансы, Идея, Задача, Заметка; выбранная ставится перед текстом при сохранении («Финансы: …»), после сохранения сбрасывается
   - План: ряд меток одинаковой ширины без рамок; подбор размера текста 14→11 px, дальше только иконки; приставка при сохранении; метка в черновике; цветная метка в ленте
+- 🔄 3. Расходы кнопками — на главном экране сумма с цифровой клавиатуры, 2 счёта и 9 статей столбиком; запись «Финансы: мир 800 продукты, комментарий»; метки иконками (Финансы, Идеи, Мысли), без метки — «Заметка»; внизу последние записи, все записи — в меню; счета и статьи загружаются из txt
+  - План: главный экран по утверждённому макету 360×720; правила записи (сумма → Финансы, без метки → Заметка); меню: «Все записи» и «Загрузить счета и статьи»; файл txt [Счета]/[Статьи], пока пример; тесты, узкий экран, публикация
+  - EN: Main screen per approved mockup (360×720): textarea, mic + 3 icon-only tags (Финансы/Идеи/Мысли) spread over width, «Стереть» (1/4) + «Сохранить» (3/4); below: amount display + own numpad (no system keyboard), 2 account buttons, 9 expense categories in one column (24 px rows); bottom: today's recent entries, as many as fit. Save rules: amount present → «Финансы: <acc> <amount> <cat>, <text>» (lowercase acc/cat, same as voice); no tag → «Заметка: <text>». Expenses only (no income/transfer). Full feed with search/edit moves to menu «Все записи» (history back closes it). Lists loaded from txt (sections [Счета], [Статьи]; first 2 / first 9 shown), stored in settings; defaults = mockup sample. Export button in the Finance module — later, separate project.
 
 ## Решения
 

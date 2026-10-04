@@ -1,4 +1,4 @@
-// Чистые функции «Захвата» (задачи 1, 2): CSV, даты, отбор записей, объединение резервных копий, метки.
+// Чистые функции «Захвата» (задачи 1, 2, 3): CSV, даты, отбор записей, объединение резервных копий, метки, расходы кнопками.
 // Без обращения к странице и базе — поэтому их проверяет tests.html.
 
 /** Колонки CSV — порядок фиксирован, по нему работает разбор на компьютере. */
@@ -198,4 +198,78 @@ export function joinTranscripts(parts) {
 /** Для поиска: регистр и «ё» не важны. */
 export function normalizeForSearch(s) {
   return (s || '').toLowerCase().replace(/ё/g, 'е');
+}
+
+// ---------------- Расходы кнопками (задача 3) ----------------
+
+/** Сколько кнопок помещается на экране 360×720: счета — 2, статьи — 9 (остальные из файла не показываются). */
+export const MAX_ACCOUNTS = 2;
+export const MAX_CATS = 9;
+
+/** Счета и статьи, пока файл из модуля Финансов не загружен. */
+export const DEFAULT_LISTS = {
+  accounts: ['Мир', 'Виза'],
+  cats: ['Продукты', 'Бензин', 'Кафе', 'Дом', 'Здоровье', 'Связь', 'Транспорт', 'Коммуналка', 'Прочее'],
+};
+
+/**
+ * Разобрать txt из модуля Финансов:
+ *   [Счета]      ← раздел
+ *   Мир          ← по одному названию в строке, порядок = порядок кнопок
+ *   [Статьи]
+ *   Продукты
+ * Пустые строки и строки с # пропускаются, повторы убираются. Вернёт { accounts, cats } или ошибку в error.
+ */
+export function parseLists(text) {
+  const out = { accounts: [], cats: [] };
+  let section = null;
+  for (let line of String(text || '').replace(/^﻿/, '').split(/\r?\n/)) {
+    line = line.trim();
+    if (!line || line.startsWith('#')) continue;
+    const head = line.match(/^\[(.+)\]$/);
+    if (head) {
+      const name = head[1].trim().toLowerCase();
+      section = name === 'счета' ? 'accounts' : name === 'статьи' ? 'cats' : null;
+      continue;
+    }
+    if (section && !out[section].includes(line)) out[section].push(line);
+  }
+  if (!out.accounts.length || !out.cats.length) {
+    return { ...out, error: 'В файле нужны разделы [Счета] и [Статьи], в каждом хотя бы одна строка.' };
+  }
+  return out;
+}
+
+/**
+ * Нажатие кнопки цифровой клавиатуры: '0'–'9', ',' или '⌫'.
+ * Не больше 9 цифр до запятой и 2 после, одна запятая, без ведущих нулей («05» → «5»).
+ */
+export function typeAmount(cur, key) {
+  cur = cur || '';
+  if (key === '⌫') return cur.slice(0, -1);
+  const [whole, frac] = cur.split(',');
+  if (key === ',') return cur.includes(',') ? cur : (cur || '0') + ',';
+  if (!/^\d$/.test(key)) return cur;
+  if (frac !== undefined) return frac.length >= 2 ? cur : cur + key;
+  if (whole === '0') return key;
+  return whole.length >= 9 ? cur : cur + key;
+}
+
+/** Сумма для экрана: «12500,5» → «12 500,5» (тонкие пробелы между тысячами). */
+export function formatAmount(raw) {
+  if (!raw) return '0';
+  const [whole, frac] = raw.split(',');
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return frac === undefined ? grouped : grouped + ',' + frac;
+}
+
+/**
+ * Текст расхода в том же виде, что и голосом: «мир 800 продукты, Пятёрочка у дома».
+ * Метку «Финансы: » ставит applyTag. Висячая запятая у суммы («800,») отбрасывается.
+ */
+export function financeText({ account, amount, cat, note }) {
+  const sum = (amount || '').replace(/,$/, '');
+  const head = [account && account.toLowerCase(), sum, cat && cat.toLowerCase()].filter(Boolean).join(' ');
+  note = (note || '').trim();
+  return note ? `${head}, ${note}` : head;
 }

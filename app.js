@@ -1,33 +1,47 @@
-// «Захват» — экран и действия (задачи 1, 2): ввод, метки, лента дня, поиск, правка, выгрузка CSV, резервная копия.
+// «Захват» — экран и действия (задачи 1, 2, 3): ввод, метки-иконки, расход кнопками, последние записи,
+// все записи с поиском и правкой, загрузка счетов и статей, выгрузка CSV, резервная копия.
 
 import * as db from './db.js';
 import {
   toCsv, selectForExport, mergeEntries, formatTime, formatShort, formatLocal,
   fileStamp, isSameDay, appendPhrase, normalizeForSearch, applyTag, splitTag,
+  parseLists, typeAmount, formatAmount, financeText, DEFAULT_LISTS, MAX_ACCOUNTS, MAX_CATS,
 } from './core.js';
 import { Dictation } from './speech.js';
 
 const $ = (id) => document.getElementById(id);
 const ui = {
-  text: $('text'), interim: $('interim'), mic: $('btnMic'), save: $('btnSave'), status: $('status'),
+  text: $('text'), interim: $('interim'), mic: $('btnMic'), save: $('btnSave'), clear: $('btnClear'), status: $('status'),
   tags: $('tags'),
-  btnSearch: $('btnSearch'), searchBox: $('searchBox'), search: $('search'),
-  btnMenu: $('btnMenu'), menu: $('menu'), menuInfo: $('menuInfo'),
-  feedTitle: $('feedTitle'), feed: $('feed'),
+  amount: $('amount'), accounts: $('accounts'), cats: $('cats'), pad: $('pad'),
+  recent: $('recent'), homeView: $('homeView'), allView: $('allView'), btnBack: $('btnBack'),
+  search: $('search'), feedTitle: $('feedTitle'), feed: $('feed'),
+  btnMenu: $('btnMenu'), menu: $('menu'), menuInfo: $('menuInfo'), listsInfo: $('listsInfo'),
   toast: $('toast'), toastText: $('toastText'), toastAction: $('toastAction'),
   dlg: $('exportDlg'), form: $('exportForm'), periodBox: $('periodBox'), exportCount: $('exportCount'),
-  file: $('fileRestore'),
+  file: $('fileRestore'), fileLists: $('fileLists'),
 };
 
-const DRAFT_KEY = 'zahvat.draft';   // черновик поля — в localStorage: пишется мгновенно и переживает закрытие
+const DRAFT_KEY = 'zahvat.draft';       // черновик (текст, метка, сумма, статья) — в localStorage: пишется мгновенно
+const ACCOUNT_KEY = 'zahvat.account';   // последний выбранный счёт — остаётся выбранным после сохранения
+const FIN_TAG = 'Финансы';
+const NOTE_TAG = 'Заметка';             // запись без выбранной метки
+// Метки, которые узнаются в ленте: нынешние и старые (до задачи 3 были «Идея» и «Задача»)
+const KNOWN_TAGS = ['Финансы', 'Идеи', 'Мысли', 'Заметка', 'Идея', 'Задача'];
 
 let entries = [];          // все записи в памяти (их немного, так проще и быстрее)
 let draftVoice = false;    // в текущем тексте есть надиктованное → источник 'voice'
-let editingId = null;      // какую запись сейчас правим
+let editingId = null;      // какую запись сейчас правим (в «Все записи»)
 let voiceBase = '';        // текст поля на момент начала сессии распознавания
 let speechError = '';      // последнее сообщение об ошибке голоса
-let selectedTag = null;    // выбранная метка («Финансы», «Идея»…) или null
+let selectedTag = null;    // выбранная метка («Финансы», «Идеи», «Мысли») или null
 const TAGS = [...ui.tags.querySelectorAll('.tag')].map(b => b.dataset.tag);
+
+// Расход кнопками
+let lists = { ...DEFAULT_LISTS, loadedAt: null };   // счета и статьи (из файла модуля Финансов)
+let amount = '';           // набранная сумма как строка: «800», «12500,5»
+let account = null;        // выбранный счёт
+let cat = null;            // выбранная статья или null
 
 const ICON_VOICE = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" class="fill"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>';
 const ICON_TEXT = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg>';
@@ -54,39 +68,74 @@ const dictation = new Dictation({
   onError: (msg) => { speechError = msg; updateStatus(); },
 });
 
-/** Строка состояния под кнопками: ошибка голоса, запись или отсутствие сети. */
+/** Строка состояния под кнопками: только ошибка голоса или отсутствие сети (подсказок нет). */
 function updateStatus() {
   let msg = speechError;
-  if (!msg && dictation.recording) msg = navigator.onLine ? 'Слушаю… Нажмите микрофон ещё раз, чтобы остановить.' : '';
   if (!msg && !navigator.onLine) msg = 'Нет сети: голосовой ввод Chrome не работает, текст сохраняется как обычно.';
   ui.status.textContent = msg;
-  ui.status.classList.toggle('box', !!speechError || !navigator.onLine);
+  ui.status.classList.toggle('box', !!msg);
 }
 
 // ---------------- Метки ----------------
 
-/** Выбрать метку (повторное нажатие на выбранную — снять). */
+/** Выбрать метку (null — без метки). Уход с «Финансов» стирает набранную сумму и статью. */
 function setTag(tag) {
   selectedTag = tag && TAGS.includes(tag) ? tag : null;
   for (const b of ui.tags.querySelectorAll('.tag')) {
     b.setAttribute('aria-pressed', String(b.dataset.tag === selectedTag));
   }
+  if (selectedTag !== FIN_TAG && (amount || cat)) { amount = ''; cat = null; renderFin(); }
 }
 
-/**
- * Подобрать размер текста меток: от 14 px вниз до 11 px, пока каждая надпись не влезет целиком.
- * Не влезает и при 11 px — оставляем только иконки. Вызывается при любом изменении ширины.
- */
-const TAG_FONT_MAX = 14, TAG_FONT_MIN = 11;
-function fitTags() {
-  const box = ui.tags;
-  const buttons = [...box.querySelectorAll('.tag')];
-  box.classList.remove('icons-only');
-  for (let size = TAG_FONT_MAX; size >= TAG_FONT_MIN; size--) {
-    box.style.setProperty('--tag-font', size + 'px');
-    if (buttons.every(b => b.scrollWidth <= b.clientWidth)) return;
-  }
-  box.classList.add('icons-only');
+// ---------------- Расход кнопками ----------------
+
+/** Нарисовать сумму, кнопки счетов и статей (первые 2 и 9 из файла — сколько влезает на экран). */
+function renderFin() {
+  ui.amount.textContent = formatAmount(amount);
+  ui.amount.classList.toggle('empty', !amount);
+  const accs = lists.accounts.slice(0, MAX_ACCOUNTS);
+  if (!accs.includes(account)) account = accs[0] || null;
+  fillButtons(ui.accounts, accs, account);
+  fillButtons(ui.cats, lists.cats.slice(0, MAX_CATS), cat);
+  updateSaveButton();
+}
+
+function fillButtons(box, names, selected) {
+  box.replaceChildren(...names.map(name => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = name;
+    b.dataset.name = name;
+    b.setAttribute('aria-pressed', String(name === selected));
+    return b;
+  }));
+}
+
+/** Сумма набрана и больше нуля — запись будет расходом. */
+function hasAmount() {
+  return parseFloat(amount.replace(',', '.')) > 0;
+}
+
+function pressKey(key) {
+  amount = typeAmount(amount, key);
+  if (amount && selectedTag !== FIN_TAG) setTag(FIN_TAG);
+  renderFin();
+  saveDraftSoon();
+}
+
+/** Загрузить счета и статьи из txt, выгруженного модулем Финансов. */
+async function loadLists(file) {
+  const parsed = parseLists(await file.text());
+  if (parsed.error) { showToast(parsed.error); return; }
+  lists = { accounts: parsed.accounts, cats: parsed.cats, loadedAt: Date.now() };
+  await db.setSetting('finLists', lists);
+  if (cat && !lists.cats.includes(cat)) cat = null;
+  renderFin();
+  const more = [];
+  if (lists.accounts.length > MAX_ACCOUNTS) more.push(`счетов — первые ${MAX_ACCOUNTS}`);
+  if (lists.cats.length > MAX_CATS) more.push(`статей — первые ${MAX_CATS}`);
+  showToast(`Загружено: счетов ${lists.accounts.length}, статей ${lists.cats.length}` +
+    (more.length ? `. На экране ${more.join(', ')}.` : '.'), null, null, 5000);
 }
 
 // ---------------- Черновик ----------------
@@ -99,23 +148,27 @@ function saveDraftSoon() {
 function saveDraftNow() {
   clearTimeout(draftTimer);
   try {
-    if (ui.text.value || selectedTag) {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ text: ui.text.value, voice: draftVoice, tag: selectedTag }));
+    if (ui.text.value || selectedTag || amount || cat) {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ text: ui.text.value, voice: draftVoice, tag: selectedTag, amount, cat }));
     }
     else localStorage.removeItem(DRAFT_KEY);
   } catch { /* хранилище недоступно — не страшно, база записей отдельно */ }
 }
 function restoreDraft() {
   try {
+    account = localStorage.getItem(ACCOUNT_KEY);
     const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
-    if (d) { ui.text.value = d.text || ''; draftVoice = !!d.voice; setTag(d.tag); }
+    if (d) {
+      ui.text.value = d.text || ''; draftVoice = !!d.voice; setTag(d.tag);
+      if (d.tag === FIN_TAG) { amount = typeof d.amount === 'string' ? d.amount : ''; cat = d.cat || null; }
+    }
   } catch { /* битый черновик — пропускаем */ }
 }
 
-// ---------------- Сохранение ----------------
+// ---------------- Сохранение и «Стереть» ----------------
 
 function updateSaveButton() {
-  ui.save.disabled = !(ui.text.value.trim() || ui.interim.textContent.trim());
+  ui.save.disabled = !(ui.text.value.trim() || ui.interim.textContent.trim() || hasAmount());
 }
 
 function newId() {
@@ -127,6 +180,25 @@ function newId() {
   });
 }
 
+/** Всё, что набрано сейчас, — чтобы вернуть после ошибки записи или «Стереть». */
+function snapshot() {
+  return { text: ui.text.value, voice: draftVoice, tag: selectedTag, amount, cat };
+}
+function restore(s) {
+  ui.text.value = s.text;
+  draftVoice = s.voice;
+  setTag(s.tag);
+  amount = s.amount; cat = s.cat;   // после setTag: он стирает сумму, пока метка не «Финансы»
+  renderFin();
+  saveDraftNow();
+}
+function resetInput() {
+  ui.text.value = '';
+  draftVoice = false;
+  setTag(null);   // заодно стирает сумму и статью
+  renderFin();
+}
+
 async function saveEntry() {
   if (dictation.recording || ui.interim.textContent) {
     // Недоговорённое (серый текст) тоже сохраняем, запись голоса останавливаем
@@ -135,27 +207,25 @@ async function saveEntry() {
     if (pending) { ui.text.value = appendPhrase(ui.text.value, pending); draftVoice = true; }
   }
   const raw = ui.text.value.trim();
-  if (!raw) return;
-  const tag = selectedTag;
+  const isFin = selectedTag === FIN_TAG && hasAmount();
+  if (!raw && !isFin) return;
+  const before = snapshot();
+  // Расход: «Финансы: мир 800 продукты, Пятёрочка»; без метки — «Заметка: …»
+  const text = isFin
+    ? applyTag(financeText({ account, amount, cat, note: raw }), FIN_TAG)
+    : applyTag(raw, selectedTag || NOTE_TAG);
   const now = Date.now();
   const entry = {
     id: newId(), ts: now, createdAt: now, updatedAt: now,
-    text: applyTag(raw, tag),   // «Финансы: виза 500 кальян»
-    source: draftVoice ? 'voice' : 'text', exportedAt: null,
+    text, source: draftVoice ? 'voice' : 'text', exportedAt: null,
   };
-  // Поле и метку сбрасываем сразу: если начать следующую запись, пока идёт запись в базу, она не пропадёт
-  ui.text.value = '';
-  draftVoice = false;
-  setTag(null);
-  updateSaveButton();
+  // Поле сбрасываем сразу: если начать следующую запись, пока идёт запись в базу, она не пропадёт
+  resetInput();
   try {
     await db.putEntry(entry);
   } catch (err) {
-    ui.text.value = ui.text.value ? raw + '\n' + ui.text.value : raw;   // возвращаем текст и метку
-    draftVoice = entry.source === 'voice';
-    setTag(tag);
-    saveDraftNow();
-    updateSaveButton();
+    if (ui.text.value) before.text = before.text + '\n' + ui.text.value;
+    restore(before);
     showToast('Не удалось сохранить: ' + (err && err.message || err) + '. Текст остался в поле.');
     return;
   }
@@ -165,30 +235,100 @@ async function saveEntry() {
   showToast('Сохранено');
 }
 
-// ---------------- Лента ----------------
+/** «Стереть»: очистить поле, сумму, статью и метку; можно вернуть из сообщения. */
+function clearInput() {
+  dictation.cancel();
+  ui.interim.textContent = '';
+  const before = snapshot();
+  if (!before.text && !before.tag && !before.amount && !before.cat) return;
+  resetInput();
+  saveDraftNow();
+  showToast('Стёрто', 'Вернуть', () => restore(before), 6000);
+}
+
+// ---------------- Последние записи и «Все записи» ----------------
 
 function render() {
-  const q = normalizeForSearch(ui.search.value.trim());
-  const searching = !ui.searchBox.hidden && q;
-  const now = Date.now();
-  const list = (searching
-    ? entries.filter(e => normalizeForSearch(e.text).includes(q))
-    : entries.filter(e => isSameDay(e.ts, now))
-  ).sort((a, b) => b.ts - a.ts);
+  renderRecent();
+  if (!ui.allView.hidden) renderFeed();
+}
 
-  ui.feedTitle.textContent = searching ? `Найдено: ${list.length}` : `Сегодня · ${list.length}`;
+/** Текст записи с цветной меткой: «Финансы:» выделена. */
+function entryText(e) {
+  const frag = document.createDocumentFragment();
+  const { tag, rest } = splitTag(e.text, KNOWN_TAGS);
+  if (tag) {
+    const lb = document.createElement('span');
+    lb.className = 'lb';
+    lb.textContent = tag + ': ';
+    frag.append(lb, rest);
+  } else frag.append(e.text);
+  return frag;
+}
+
+/** Главный экран: записи за сегодня по одной строке, новые сверху; лишние обрезает высота экрана. */
+function renderRecent() {
+  const now = Date.now();
+  const list = entries.filter(e => isSameDay(e.ts, now)).sort((a, b) => b.ts - a.ts).slice(0, 40);
+  ui.recent.replaceChildren();
+  if (!list.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = 'Сегодня записей ещё нет.';
+    ui.recent.append(li);
+    return;
+  }
+  for (const e of list) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.id = e.id;
+    b.setAttribute('aria-label', `${formatTime(e.ts)}: ${e.text}. Нажмите, чтобы изменить`);
+    const time = document.createElement('span');
+    time.className = 'time';
+    time.textContent = formatTime(e.ts);
+    b.append(time, entryText(e));
+    li.append(b);
+    ui.recent.append(li);
+  }
+}
+
+/** Открыть «Все записи» (по желанию — сразу правку записи). «Назад» телефона закрывает экран. */
+function openAll(editId = null) {
+  closeMenu();
+  editingId = editId;
+  ui.search.value = '';
+  ui.homeView.hidden = true;
+  ui.allView.hidden = false;
+  history.pushState({ view: 'all' }, '');
+  renderFeed();
+  window.scrollTo(0, 0);
+}
+function closeAll() {
+  editingId = null;
+  ui.allView.hidden = true;
+  ui.homeView.hidden = false;
+  renderRecent();
+}
+
+function renderFeed() {
+  const q = normalizeForSearch(ui.search.value.trim());
+  const list = (q ? entries.filter(e => normalizeForSearch(e.text).includes(q)) : entries.slice())
+    .sort((a, b) => b.ts - a.ts);
+
+  ui.feedTitle.textContent = q ? `Найдено: ${list.length}` : `Все записи · ${list.length}`;
   ui.feed.replaceChildren();
   if (!list.length) {
     const li = document.createElement('li');
     li.className = 'empty';
-    li.textContent = searching ? 'Ничего не найдено.' : 'Сегодня записей ещё нет.';
+    li.textContent = q ? 'Ничего не найдено.' : 'Записей ещё нет.';
     ui.feed.append(li);
     return;
   }
-  for (const e of list) ui.feed.append(e.id === editingId ? editorItem(e) : entryItem(e, searching));
+  for (const e of list) ui.feed.append(e.id === editingId ? editorItem(e) : entryItem(e));
 }
 
-function entryItem(e, withDate) {
+function entryItem(e) {
   const li = document.createElement('li');
   const b = document.createElement('button');
   b.type = 'button';
@@ -197,19 +337,13 @@ function entryItem(e, withDate) {
   b.setAttribute('aria-label', `${formatLocal(e.ts)}, ${e.source === 'voice' ? 'голосом' : 'текстом'}${e.exportedAt ? ', выгружено' : ''}: ${e.text}. Нажмите, чтобы изменить`);
   const time = document.createElement('span');
   time.className = 'time';
-  time.textContent = withDate ? formatShort(e.ts) : formatTime(e.ts);
+  time.textContent = formatShort(e.ts);
   const src = document.createElement('span');
   src.className = 'src';
   src.innerHTML = e.source === 'voice' ? ICON_VOICE : ICON_TEXT;
   const txt = document.createElement('span');
   txt.className = 'txt';
-  const { tag, rest } = splitTag(e.text, TAGS);
-  if (tag) {
-    const lb = document.createElement('span');
-    lb.className = 'lb';
-    lb.textContent = tag + ': ';
-    txt.append(lb, rest);
-  } else txt.textContent = e.text;
+  txt.append(entryText(e));
   b.append(time, src, txt);
   li.append(b);
   return li;
@@ -233,7 +367,7 @@ function editorItem(e) {
     button('Отмена', '', () => { editingId = null; render(); }),
   );
   li.append(ta, meta, row);
-  queueMicrotask(() => ta.focus());
+  queueMicrotask(() => { ta.focus(); li.scrollIntoView({ block: 'nearest' }); });
   return li;
 }
 
@@ -408,6 +542,8 @@ async function restoreJson(file) {
     const current = await db.getAllSettings();
     for (const [k, v] of Object.entries(data.settings)) if (!(k in current)) await db.setSetting(k, v);
   }
+  const fl = await db.getSetting('finLists');
+  if (fl && fl.accounts && fl.cats) { lists = fl; renderFin(); }
   entries = await db.getAllEntries();
   render();
   showToast(`Восстановлено: добавлено ${added}, обновлено ${updated}, без изменений ${skipped}.`);
@@ -420,6 +556,9 @@ async function openMenu() {
   const last = await db.getSetting('lastExportAt');
   ui.menuInfo.textContent = `Новых: ${fresh} · всего: ${entries.length}\n` +
     `Последняя выгрузка: ${last ? formatShort(last) : 'ещё не было'}`;
+  ui.listsInfo.textContent = lists.loadedAt
+    ? `Счетов ${lists.accounts.length}, статей ${lists.cats.length} · загружено ${formatShort(lists.loadedAt)}`
+    : 'Сейчас примеры — загрузите файл из модуля Финансов';
   ui.menu.hidden = false;
   ui.btnMenu.setAttribute('aria-expanded', 'true');
   ui.menu.querySelector('button').focus();
@@ -448,7 +587,9 @@ function updateExportCount() {
 async function onMenuAction(act) {
   closeMenu();
   try {
-    if (act === 'share' || act === 'download' || act === 'copy') await exportCsv('new', act);
+    if (act === 'all') openAll();
+    else if (act === 'lists') ui.fileLists.click();
+    else if (act === 'share' || act === 'download' || act === 'copy') await exportCsv('new', act);
     else if (act === 'period') openExportDialog();
     else if (act === 'undo') await undoExport();
     else if (act === 'backup') await backupJson();
@@ -478,19 +619,41 @@ function wire() {
     setTag(b.dataset.tag === selectedTag ? null : b.dataset.tag);
     saveDraftSoon();
   });
-  new ResizeObserver(fitTags).observe(ui.tags);
-  // Кнопка «Сохранить» не забирает фокус у поля — клавиатура не прыгает
+  // «Сохранить» и «Стереть» не забирают фокус у поля — клавиатура не прыгает
   ui.save.addEventListener('mousedown', (ev) => ev.preventDefault());
   ui.save.addEventListener('click', saveEntry);
+  ui.clear.addEventListener('mousedown', (ev) => ev.preventDefault());
+  ui.clear.addEventListener('click', clearInput);
 
-  ui.btnSearch.addEventListener('click', () => {
-    const open = ui.searchBox.hidden;
-    ui.searchBox.hidden = !open;
-    ui.btnSearch.setAttribute('aria-expanded', String(open));
-    if (open) ui.search.focus(); else ui.search.value = '';
-    render();
+  // Расход: своя клавиатура (системная при нажатии прячется), счёт, статья (повторное нажатие снимает)
+  ui.pad.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-key]');
+    if (b) pressKey(b.dataset.key);
   });
-  ui.search.addEventListener('input', render);
+  ui.accounts.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-name]');
+    if (!b) return;
+    account = b.dataset.name;
+    try { localStorage.setItem(ACCOUNT_KEY, account); } catch { /* не страшно */ }
+    renderFin();
+  });
+  ui.cats.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-name]');
+    if (!b) return;
+    cat = cat === b.dataset.name ? null : b.dataset.name;
+    if (cat && selectedTag !== FIN_TAG) setTag(FIN_TAG);
+    renderFin();
+    saveDraftSoon();
+  });
+
+  // Последняя запись на главном → «Все записи» с её правкой
+  ui.recent.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-id]');
+    if (b) openAll(b.dataset.id);
+  });
+  ui.btnBack.addEventListener('click', () => history.back());
+  window.addEventListener('popstate', () => { if (!ui.allView.hidden) closeAll(); });
+  ui.search.addEventListener('input', () => { editingId = null; renderFeed(); });
 
   ui.feed.addEventListener('click', (ev) => {
     const b = ev.target.closest('.entry');
@@ -518,6 +681,15 @@ function wire() {
     catch (err) { showToast('Ошибка: ' + (err && err.message || err)); }
   });
 
+  ui.fileLists.addEventListener('change', async () => {
+    const f = ui.fileLists.files[0];
+    ui.fileLists.value = '';
+    if (f) {
+      try { await loadLists(f); }
+      catch (err) { showToast('Не удалось загрузить: ' + (err && err.message || err)); }
+    }
+  });
+
   ui.file.addEventListener('change', async () => {
     const f = ui.file.files[0];
     ui.file.value = '';
@@ -540,10 +712,15 @@ function wire() {
 async function init() {
   wire();
   restoreDraft();
-  updateSaveButton();
+  renderFin();
   updateStatus();
   // Просим браузер не стирать базу при нехватке места
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  try {
+    const saved = await db.getSetting('finLists');
+    if (saved && saved.accounts && saved.cats) lists = saved;
+  } catch { /* остаются примеры */ }
+  renderFin();
   try {
     entries = await db.getAllEntries();
   } catch (err) {
