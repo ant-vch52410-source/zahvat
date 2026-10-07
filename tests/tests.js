@@ -1,9 +1,9 @@
-// Тесты чистых функций «Захвата» (задачи 1, 2, 3). Запуск: открыть tests/tests.html через локальный сервер.
+// Тесты чистых функций «Захвата» (задачи 1, 2, 3, 4). Запуск: открыть tests/tests.html через локальный сервер.
 
 import {
   toCsv, csvField, parseCsv, CSV_COLUMNS, formatLocal, fileStamp, selectForExport,
   mergeEntries, normalizeEntry, joinTranscripts, appendPhrase, normalizeForSearch, isSameDay,
-  applyTag, splitTag, parseLists, typeAmount, formatAmount, financeText,
+  applyTag, splitTag, parseLists, typeAmount, formatAmount, financeText, parseReceiptQr, receiptLabel,
 } from '../core.js';
 
 const results = [];
@@ -212,6 +212,23 @@ test('Расход: текст как голосом', () => {
 // ---- Поиск ----
 test('Поиск: регистр и ё не важны', () => {
   eq(normalizeForSearch('ЁЛКА'), 'елка');
+});
+
+// ---- Чек по QR ----
+test('Чек: QR-код разбирается', () => {
+  const r = parseReceiptQr('t=20261006T1942&s=1629.40&fn=7380440700076549&i=41437&fp=2489517395&n=1');
+  eq(r.ts, t(2026, 10, 6, 19, 42), 'время:');
+  eq([r.sum, r.fn, r.i, r.fp, r.n], [1629.4, '7380440700076549', '41437', '2489517395', '1']);
+  eq(parseReceiptQr('t=20261006T194205&s=5&fn=1&i=2&fp=3').ts, t(2026, 10, 6, 19, 42, 5), 'с секундами:');
+});
+test('Чек: чужой QR — не чек', () => {
+  eq(parseReceiptQr('https://example.com'), null);
+  eq(parseReceiptQr('t=20261006T1942&s=0&fn=1&i=2&fp=3'), null, 'нулевая сумма:');
+  eq(parseReceiptQr('t=20261006T1942&s=10&fn=1&i=2'), null, 'без ФП:');
+});
+test('Чек: подпись в ленте', () => {
+  eq(receiptLabel('t=20261006T1942&s=1629.4&fn=1&i=2&fp=3&n=1'), `06.10 19:42 · ${formatAmount('1629')},40 ₽`, 'тысячи — как у суммы:');
+  eq(receiptLabel('мусор'), 'мусор');
 });
 
 // ---- Вывод ----

@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- «Захват» (задачи 1, 2, 3): поле для голоса и текста, метки-иконки, расход кнопками, последние записи, меню (все записи, счета, выгрузка). -->
+<!-- «Захват» (задачи 1, 2, 3, 4): поле для голоса и текста, метки-иконки, расход кнопками, последние записи, меню (все записи, счета, выгрузка), чек по QR-коду. -->
 <html lang="ru">
 <head>
   <meta charset="utf-8">
@@ -20,6 +20,10 @@
   <div id="homeView" class="screen home">
     <header class="bar">
       <h1>Захват</h1>
+      <!-- Чек (задача 4): камера читает QR-код кассового чека, запись «Чек: t=…&s=…» уходит на ПК вместе с остальными -->
+      <button id="btnScan" class="icon" type="button" aria-label="Чек: считать QR-код">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM18 14h2M14 20h2"/></svg>
+      </button>
       <div class="menu-wrap">
         <button id="btnMenu" class="icon" type="button" aria-label="Меню: все записи, счета, выгрузка" aria-haspopup="menu" aria-expanded="false" aria-controls="menu">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.6" class="fill"/><circle cx="12" cy="12" r="1.6" class="fill"/><circle cx="12" cy="19" r="1.6" class="fill"/></svg>
@@ -143,7 +147,19 @@
     </form>
   </dialog>
 
+  <!-- Чек по QR (задача 4): видео с камеры; не читается — «Фото» (снимок или картинка из галереи) -->
+  <dialog id="scanDlg" class="scan" aria-labelledby="scanTitle">
+    <h2 id="scanTitle">Чек</h2>
+    <video id="scanVideo" playsinline muted></video>
+    <p id="scanHint" class="hint">Наведите камеру на QR-код чека</p>
+    <div class="dlg-actions">
+      <button id="btnScanPhoto" type="button">Фото</button>
+      <button id="btnScanClose" type="button" class="ghost">Закрыть</button>
+    </div>
+  </dialog>
+
   <input id="fileRestore" type="file" accept=".json,application/json" hidden>
   <input id="fileLists" type="file" accept=".txt,text/plain" hidden>
+  <input id="filePhoto" type="file" accept="image/*" capture="environment" hidden>
 </body>
 </html>

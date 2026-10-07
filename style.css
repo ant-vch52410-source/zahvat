@@ -253,3 +253,7 @@ fieldset input { width: 22px; height: 22px; }
 @media (prefers-reduced-motion: reduce) {
   .mic.recording { animation: none; box-shadow: 0 0 0 6px rgba(198, 47, 47, .35); }
 }
+
+/* ---- Чек по QR (задача 4) ---- */
+.scan video { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 8px; background: #000; }
+.scan .hint { margin: 8px 0 10px; }

@@ -273,3 +273,28 @@ export function financeText({ account, amount, cat, note }) {
   note = (note || '').trim();
   return note ? `${head}, ${note}` : head;
 }
+
+// ---------------- Чек по QR (задача 4) ----------------
+
+export const RECEIPT_TAG = 'Чек';
+
+/**
+ * QR-код кассового чека: «t=20261006T1942&s=1629.40&fn=…&i=…&fp=…&n=1» → { ts, sum, fn, i, fp, n }.
+ * Не чек (нет даты, суммы или номеров ФН/ФД/ФП) — null.
+ */
+export function parseReceiptQr(raw) {
+  const p = new URLSearchParams((raw || '').trim());
+  const t = (p.get('t') || '').match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})?$/);
+  const sum = Number(p.get('s'));
+  if (!t || !(sum > 0) || !p.get('fn') || !p.get('i') || !p.get('fp')) return null;
+  const ts = new Date(+t[1], +t[2] - 1, +t[3], +t[4], +t[5], +(t[6] || 0)).getTime();
+  return { ts, sum, fn: p.get('fn'), i: p.get('i'), fp: p.get('fp'), n: p.get('n') || '1' };
+}
+
+/** Чек для ленты: «06.10 19:42 · 1 629,40 ₽»; не чек — текст как есть. */
+export function receiptLabel(raw) {
+  const r = parseReceiptQr(raw);
+  if (!r) return raw;
+  const [whole, frac] = r.sum.toFixed(2).split('.');
+  return `${formatShort(r.ts)} · ${formatAmount(whole)},${frac} ₽`;
+}

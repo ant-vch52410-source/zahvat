@@ -1,11 +1,12 @@
-// «Захват» — экран и действия (задачи 1, 2, 3): ввод, метки-иконки, расход кнопками, последние записи,
-// все записи с поиском и правкой, загрузка счетов и статей, выгрузка CSV, резервная копия.
+// «Захват» — экран и действия (задачи 1, 2, 3, 4): ввод, метки-иконки, расход кнопками, последние записи,
+// все записи с поиском и правкой, загрузка счетов и статей, выгрузка CSV, резервная копия, чек по QR-коду.
 
 import * as db from './db.js';
 import {
   toCsv, selectForExport, mergeEntries, formatTime, formatShort, formatLocal,
   fileStamp, isSameDay, appendPhrase, normalizeForSearch, applyTag, splitTag,
   parseLists, typeAmount, formatAmount, financeText, DEFAULT_LISTS, MAX_ACCOUNTS, MAX_CATS,
+  RECEIPT_TAG, parseReceiptQr, receiptLabel,
 } from './core.js';
 import { Dictation } from './speech.js';
 
@@ -20,6 +21,8 @@ const ui = {
   toast: $('toast'), toastText: $('toastText'), toastAction: $('toastAction'),
   dlg: $('exportDlg'), form: $('exportForm'), periodBox: $('periodBox'), exportCount: $('exportCount'),
   file: $('fileRestore'), fileLists: $('fileLists'),
+  btnScan: $('btnScan'), scanDlg: $('scanDlg'), scanVideo: $('scanVideo'), scanHint: $('scanHint'),
+  btnScanPhoto: $('btnScanPhoto'), btnScanClose: $('btnScanClose'), filePhoto: $('filePhoto'),
 };
 
 const DRAFT_KEY = 'zahvat.draft';       // черновик (текст, метка, сумма, статья) — в localStorage: пишется мгновенно
@@ -27,7 +30,7 @@ const ACCOUNT_KEY = 'zahvat.account';   // последний выбранный
 const FIN_TAG = 'Финансы';
 const NOTE_TAG = 'Заметка';             // запись без выбранной метки
 // Метки, которые узнаются в ленте: нынешние и старые (до задачи 3 были «Идея» и «Задача»)
-const KNOWN_TAGS = ['Финансы', 'Идеи', 'Мысли', 'Заметка', 'Идея', 'Задача'];
+const KNOWN_TAGS = ['Финансы', 'Идеи', 'Мысли', 'Заметка', 'Идея', 'Задача', RECEIPT_TAG];
 
 let entries = [];          // все записи в памяти (их немного, так проще и быстрее)
 let draftVoice = false;    // в текущем тексте есть надиктованное → источник 'voice'
@@ -261,7 +264,7 @@ function entryText(e) {
     const lb = document.createElement('span');
     lb.className = 'lb';
     lb.textContent = tag + ': ';
-    frag.append(lb, rest);
+    frag.append(lb, tag === RECEIPT_TAG ? receiptLabel(rest) : rest);
   } else frag.append(e.text);
   return frag;
 }
@@ -402,6 +405,97 @@ async function removeEntry(e) {
     render();
     showToast('Запись возвращена');
   }, 7000);
+}
+
+// ---------------- Чек по QR (задача 4) ----------------
+// Камера читает QR-код кассового чека встроенным распознавателем Chrome (BarcodeDetector).
+// Запись — «Чек: t=…&s=…&fn=…&i=…&fp=…&n=1»: позиции и статьи подберёт компьютер.
+
+let detector = null;       // распознаватель QR (создаётся при первом открытии)
+let scanStream = null;     // видео с камеры, пока открыт сканер
+let scanTimer = 0;
+
+async function openScan() {
+  if (!('BarcodeDetector' in window)) {
+    showToast('Этот браузер не читает QR-коды — нужен Chrome на Android');
+    return;
+  }
+  detector ??= new BarcodeDetector({ formats: ['qr_code'] });
+  ui.scanHint.textContent = 'Наведите камеру на QR-код чека';
+  ui.scanDlg.showModal();
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    if (!ui.scanDlg.open) { stopCamera(); return; }        // успели закрыть, пока камера включалась
+    ui.scanVideo.srcObject = scanStream;
+    ui.scanVideo.play().catch(() => {});   // не ждём: пока кадра нет, поиск просто повторяется
+    scanLoop();
+  } catch {
+    ui.scanHint.textContent = 'Камера недоступна — снимите чек кнопкой «Фото»';
+  }
+}
+
+/** Несколько раз в секунду ищем QR-код в кадре. */
+async function scanLoop() {
+  if (!scanStream) return;
+  try {
+    if (await takeCodes(await detector.detect(ui.scanVideo))) return;
+  } catch { /* кадр ещё не готов — попробуем следующий */ }
+  scanTimer = setTimeout(scanLoop, 250);
+}
+
+/** Найден QR-код чека → закрыть сканер и сохранить; чужой QR — подсказка. */
+async function takeCodes(codes) {
+  for (const c of codes) {
+    const raw = (c.rawValue || '').trim();
+    if (parseReceiptQr(raw)) {
+      closeScan();
+      await saveReceipt(raw);
+      return true;
+    }
+  }
+  if (codes.length) ui.scanHint.textContent = 'Это не QR-код кассового чека';
+  return false;
+}
+
+function stopCamera() {
+  clearTimeout(scanTimer);
+  if (scanStream) scanStream.getTracks().forEach(t => t.stop());
+  scanStream = null;
+  ui.scanVideo.srcObject = null;
+}
+function closeScan() {
+  stopCamera();
+  if (ui.scanDlg.open) ui.scanDlg.close();
+}
+
+/** «Фото»: снимок камерой телефона или картинка из галереи. */
+async function scanPhoto(file) {
+  ui.scanHint.textContent = 'Ищу QR-код на фото…';
+  try {
+    const img = await createImageBitmap(file);
+    if (!await takeCodes(await detector.detect(img))) ui.scanHint.textContent = 'QR-код на фото не найден — снимите ближе и ровнее';
+  } catch {
+    ui.scanHint.textContent = 'Не удалось открыть фото';
+  }
+}
+
+async function saveReceipt(raw) {
+  const text = applyTag(raw, RECEIPT_TAG);
+  if (entries.some(e => e.text === text)) {
+    showToast(`Этот чек уже сохранён: ${receiptLabel(raw)}`);
+    return;
+  }
+  const now = Date.now();
+  const entry = { id: newId(), ts: now, createdAt: now, updatedAt: now, text, source: 'text', exportedAt: null };
+  try {
+    await db.putEntry(entry);
+  } catch (err) {
+    showToast('Не удалось сохранить чек: ' + (err && err.message || err));
+    return;
+  }
+  entries.push(entry);
+  render();
+  showToast(`Чек сохранён: ${receiptLabel(raw)}`);
 }
 
 // ---------------- Сообщения ----------------
@@ -652,6 +746,15 @@ function wire() {
     if (b) openAll(b.dataset.id);
   });
   ui.btnBack.addEventListener('click', () => history.back());
+  ui.btnScan.addEventListener('click', openScan);
+  ui.btnScanClose.addEventListener('click', closeScan);
+  ui.scanDlg.addEventListener('close', stopCamera);          // «Назад» телефона тоже закрывает окно
+  ui.btnScanPhoto.addEventListener('click', () => ui.filePhoto.click());
+  ui.filePhoto.addEventListener('change', async () => {
+    const f = ui.filePhoto.files[0];
+    ui.filePhoto.value = '';
+    if (f) await scanPhoto(f);
+  });
   window.addEventListener('popstate', () => { if (!ui.allView.hidden) closeAll(); });
   ui.search.addEventListener('input', () => { editingId = null; renderFeed(); });
 
