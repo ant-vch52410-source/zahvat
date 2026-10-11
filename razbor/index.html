@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<!-- «Разбор» на телефоне (Органайзер КАА, задача 248.12): оболочка. Сверху — строка обмена (открыть файл с компьютера,
+     отправить изменения на компьютер), ниже — та же страница «Разбор», что на компьютере (кадр app/, её обслуживает Python в app.js). -->
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#2e7d5b">
+  <title>Разбор</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <style>
+    :root { --bg: #f4f5f7; --text: #1d1f22; --grey: #6b7078; --line: #d5d8dd; --accent: #2e7d5b; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #16191d; --text: #e6e8eb; --grey: #9aa0a8; --line: #33383e; --accent: #5fbf93; } }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 15px system-ui, sans-serif; }
+    body { display: flex; flex-direction: column; }
+    #top { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+    #info { color: var(--grey); font-size: 13px; flex: 1; min-width: 0; }
+    button { font: inherit; color: var(--text); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+    button.main { border-color: var(--accent); color: var(--accent); }
+    #app { flex: 1; width: 100%; border: 0; display: none; }
+    #start { flex: 1; padding: 24px 16px; line-height: 1.5; }
+    #start h2 { font-weight: 500; margin: 0 0 8px; }
+    #msg { color: var(--grey); white-space: pre-line; }
+    #msg.err { color: #c0392b; }
+  </style>
+</head>
+<body>
+  <div id="top">
+    <span id="info">Разбор</span>
+    <button id="open">Открыть файл</button>
+    <button id="send" class="main" style="display:none">На компьютер</button>
+    <input type="file" id="file" accept=".zip,application/zip" hidden>
+  </div>
+  <div id="start">
+    <h2>Разбор операций</h2>
+    <div>На компьютере в «Разборе» нажмите «📱 На телефон» — на рабочем столе появится файл razbor_….zip.
+      Перешлите его на телефон и откройте здесь кнопкой «Открыть файл».<br>
+      После работы — «На компьютер»: файл razbor_otvet_….zip положите на рабочий стол компьютера и нажмите в «Разборе» «📱 С телефона».</div>
+    <p id="msg"></p>
+  </div>
+  <iframe id="app" title="Разбор"></iframe>
+  <script src="app.js"></script>
+</body>
+</html>
