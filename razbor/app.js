@@ -130,10 +130,19 @@ with zipfile.ZipFile('/work/otvet.zip', 'w', zipfile.ZIP_DEFLATED) as z:
 `);
   const name = `razbor_otvet_${state.info.stamp}_${sent.replace(' ', '_').replace(':', '-')}.zip`;
   const file = new File([py.FS.readFile(W + '/otvet.zip')], name, {type: 'application/zip'});
+  // Chrome на Android не даёт «Поделиться» zip-файлом (отвечает «Permission denied») — тогда файл идёт в «Загрузки»
+  let saved = false;
   try {
     if (navigator.canShare && navigator.canShare({files: [file]})) await navigator.share({files: [file], title: name});
-    else { const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; a.click(); }
-  } catch (e) { if (e.name === 'AbortError') return; throw e; }
+    else saved = true;
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    saved = true;
+  }
+  if (saved) {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; a.click();
+    alert(`Файл ${name} сохранён в «Загрузки» телефона.\nОтправьте его на компьютер (Telegram, почта, кабель).`);
+  }
   state.sent = sent.slice(11); state.edits = 0;
   await put('edits', 0); await put('sent', state.sent);
   infoLine();
