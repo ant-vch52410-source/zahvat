@@ -4,7 +4,7 @@
 //    тот же Python-код, что на компьютере (копия базы — только в телефоне).
 // Выпускаете новую версию оболочки — увеличьте VERSION, иначе телефон продолжит показывать старую.
 
-const VERSION = 'razbor-v1';
+const VERSION = 'razbor-v2';
 const PYODIDE = 'https://cdn.jsdelivr.net/pyodide/v0.27.7/full/';
 const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png'];
 const APP = new URL('./app/', self.registration.scope).pathname;          // …/razbor/app/
