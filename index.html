@@ -150,7 +150,12 @@
   <!-- Чек по QR (задачи 4, 5): видео с камеры; не читается — «Снять» (фото камерой) или «Галерея» (готовый снимок) -->
   <dialog id="scanDlg" class="scan" aria-labelledby="scanTitle">
     <h2 id="scanTitle">Чек</h2>
-    <video id="scanVideo" playsinline muted></video>
+    <!-- Снимок из «Снять»/«Галерея» показывается на месте видео: двумя пальцами — масштаб, одним — сдвиг, код ищется в рамке -->
+    <div class="scan-box">
+      <video id="scanVideo" playsinline muted></video>
+      <canvas id="scanCanvas" hidden></canvas>
+      <div id="scanFrame" class="scan-frame" hidden></div>
+    </div>
     <p id="scanHint" class="hint">Наведите камеру на QR-код чека</p>
     <div class="dlg-actions three">
       <button id="btnScanPhoto" type="button">Снять</button>

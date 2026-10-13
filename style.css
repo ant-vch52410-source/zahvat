@@ -256,5 +256,13 @@ fieldset input { width: 22px; height: 22px; }
 }
 
 /* ---- Чек по QR (задача 4) ---- */
-.scan video { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 8px; background: #000; }
+.scan-box { position: relative; }
+.scan video, .scan canvas { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 8px; background: #000; }
+.scan canvas { touch-action: none; }          /* жесты пальцами — наши, страница не прокручивается и не масштабируется */
+.scan canvas[hidden], .scan video[hidden], .scan-frame[hidden] { display: none; }
+/* Рамка для QR-кода поверх снимка (задача 5) */
+.scan-frame {
+  position: absolute; left: 15%; top: 50%; width: 70%; aspect-ratio: 1; transform: translateY(-50%);
+  border: 2px solid var(--accent); border-radius: 8px; pointer-events: none;
+}
 .scan .hint { margin: 8px 0 10px; }

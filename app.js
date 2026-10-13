@@ -22,6 +22,7 @@ const ui = {
   dlg: $('exportDlg'), form: $('exportForm'), periodBox: $('periodBox'), exportCount: $('exportCount'),
   file: $('fileRestore'), fileLists: $('fileLists'),
   btnScan: $('btnScan'), scanDlg: $('scanDlg'), scanVideo: $('scanVideo'), scanHint: $('scanHint'),
+  scanCanvas: $('scanCanvas'), scanFrame: $('scanFrame'),
   btnScanPhoto: $('btnScanPhoto'), btnScanClose: $('btnScanClose'), filePhoto: $('filePhoto'),
   btnScanGallery: $('btnScanGallery'), fileGallery: $('fileGallery'),
 };
@@ -423,6 +424,7 @@ async function openScan() {
   }
   detector ??= new BarcodeDetector({ formats: ['qr_code'] });
   ui.scanHint.textContent = 'Наведите камеру на QR-код чека';
+  hidePhoto();
   ui.scanDlg.showModal();
   try {
     scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
@@ -466,18 +468,152 @@ function stopCamera() {
 }
 function closeScan() {
   stopCamera();
+  hidePhoto();
   if (ui.scanDlg.open) ui.scanDlg.close();
 }
 
-/** «Снять» или «Галерея» (задача 5): снимок камерой телефона или готовая картинка — ищем на ней QR-код. */
+// ---------------- Снимок чека: сначала ищем сами, не нашли — масштаб пальцами (задача 5) ----------------
+// На фото с телефона QR-код мелкий, и распознаватель его не видит. Поэтому ищем по частям снимка (каждая
+// часть увеличивается), а если не вышло — снимок встаёт на место видео: пальцами приблизить код и поставить
+// в рамку; когда пальцы отпущены, ищем код в рамке.
+
+let photo = null;              // снимок в окне: { img, s — масштаб (точек экрана на точку снимка), fit — масштаб «целиком», ox, oy — сдвиг }
+const touches = new Map();     // пальцы на снимке: id → {x, y}
+let lookTimer = 0;
+const NOT_FOUND = 'Код не найден. Приблизьте его пальцами и поставьте в рамку';
+
+/** «Снять» или «Галерея»: снимок камерой телефона или готовая картинка — ищем на ней QR-код. */
 async function scanPhoto(file) {
-  ui.scanHint.textContent = 'Ищу QR-код на фото…';
+  stopCamera();
+  let img;
   try {
-    const img = await createImageBitmap(file);
-    if (!await takeCodes(await detector.detect(img))) ui.scanHint.textContent = 'QR-код на фото не найден — снимите ближе и ровнее';
+    img = await createImageBitmap(file);
   } catch {
     ui.scanHint.textContent = 'Не удалось открыть фото';
+    return;
   }
+  showPhoto(img);
+  ui.scanHint.textContent = 'Ищу QR-код на фото…';
+  for (const r of photoParts(img.width, img.height)) {
+    if (!photo || photo.img !== img || touches.size) return;   // закрыли, выбрали другой снимок или уже двигают пальцами
+    if (await findIn(img, r)) return;
+  }
+  if (photo && photo.img === img) ui.scanHint.textContent = NOT_FOUND;
+}
+
+/** Где искать на снимке: весь, потом 4 и 9 частей внахлёст (так мелкий код становится крупнее). */
+function photoParts(w, h) {
+  const parts = [{ x: 0, y: 0, w, h }];
+  for (const n of [2, 3]) {
+    const size = 1.5 / n;                       // часть в полтора раза больше шага — соседние перекрываются
+    const step = (1 - size) / (n - 1);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) parts.push({ x: j * step * w, y: i * step * h, w: size * w, h: size * h });
+    }
+  }
+  return parts;
+}
+
+/** Найти QR-код чека в части снимка: часть рисуется отдельно, крупно (длинная сторона ~1000 точек). */
+async function findIn(img, r) {
+  const k = 1000 / Math.max(r.w, r.h);
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(r.w * k));
+  c.height = Math.max(1, Math.round(r.h * k));
+  c.getContext('2d').drawImage(img, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
+  try {
+    return await takeCodes(await detector.detect(c));
+  } catch {
+    return false;
+  }
+}
+
+/** Показать снимок на месте видео — целиком, по центру, с рамкой. */
+function showPhoto(img) {
+  ui.scanVideo.hidden = true;
+  ui.scanCanvas.hidden = false;
+  ui.scanFrame.hidden = false;
+  const cw = ui.scanCanvas.clientWidth, ch = ui.scanCanvas.clientHeight;
+  const dpr = window.devicePixelRatio || 1;
+  ui.scanCanvas.width = Math.round(cw * dpr);
+  ui.scanCanvas.height = Math.round(ch * dpr);
+  const fit = Math.min(cw / img.width, ch / img.height);
+  photo = { img, s: fit, fit, ox: (cw - img.width * fit) / 2, oy: (ch - img.height * fit) / 2 };
+  touches.clear();
+  drawPhoto();
+}
+
+function hidePhoto() {
+  clearTimeout(lookTimer);
+  photo = null;
+  touches.clear();
+  ui.scanCanvas.hidden = true;
+  ui.scanFrame.hidden = true;
+  ui.scanVideo.hidden = false;
+}
+
+function drawPhoto() {
+  const ctx = ui.scanCanvas.getContext('2d');
+  const dpr = ui.scanCanvas.width / ui.scanCanvas.clientWidth;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, ui.scanCanvas.width, ui.scanCanvas.height);
+  ctx.setTransform(dpr * photo.s, 0, 0, dpr * photo.s, dpr * photo.ox, dpr * photo.oy);
+  ctx.drawImage(photo.img, 0, 0);
+}
+
+/** Точка пальца относительно снимка на экране. */
+function touchPoint(ev) {
+  const b = ui.scanCanvas.getBoundingClientRect();
+  return { x: ev.clientX - b.left, y: ev.clientY - b.top };
+}
+/** Середина между пальцами и расстояние между ними (у одного пальца расстояние 0). */
+function spread(points) {
+  const p = [...points];
+  const mid = { x: p.reduce((a, q) => a + q.x, 0) / p.length, y: p.reduce((a, q) => a + q.y, 0) / p.length };
+  const dist = p.length > 1 ? Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) : 0;
+  return { mid, dist };
+}
+
+function photoDown(ev) {
+  if (!photo) return;
+  try { ui.scanCanvas.setPointerCapture(ev.pointerId); } catch { /* палец уже отпущен */ }
+  touches.set(ev.pointerId, touchPoint(ev));
+  clearTimeout(lookTimer);
+}
+
+/** Один палец двигает снимок, два — ещё и масштабируют; точка между пальцами остаётся под пальцами. */
+function photoMove(ev) {
+  if (!photo || !touches.has(ev.pointerId)) return;
+  const a = spread(touches.values());
+  touches.set(ev.pointerId, touchPoint(ev));
+  const b = spread(touches.values());
+  const zoom = a.dist && b.dist ? b.dist / a.dist : 1;
+  const s = Math.min(Math.max(photo.s * zoom, photo.fit), photo.fit * 15);
+  const k = s / photo.s;
+  photo.ox = b.mid.x - (a.mid.x - photo.ox) * k;
+  photo.oy = b.mid.y - (a.mid.y - photo.oy) * k;
+  photo.s = s;
+  drawPhoto();
+}
+
+/** Пальцы отпущены — через мгновение ищем код в рамке. */
+function photoUp(ev) {
+  touches.delete(ev.pointerId);
+  if (photo && !touches.size) lookTimer = setTimeout(lookInFrame, 300);
+}
+
+/** Искать QR-код в рамке (с небольшим запасом по краям). */
+async function lookInFrame() {
+  if (!photo) return;
+  const c = ui.scanCanvas.getBoundingClientRect(), f = ui.scanFrame.getBoundingClientRect();
+  const pad = f.width * 0.1;
+  const x1 = Math.max(0, (f.left - c.left - pad - photo.ox) / photo.s);
+  const y1 = Math.max(0, (f.top - c.top - pad - photo.oy) / photo.s);
+  const x2 = Math.min(photo.img.width, (f.right - c.left + pad - photo.ox) / photo.s);
+  const y2 = Math.min(photo.img.height, (f.bottom - c.top + pad - photo.oy) / photo.s);
+  if (x2 - x1 < 8 || y2 - y1 < 8) { ui.scanHint.textContent = NOT_FOUND; return; }
+  ui.scanHint.textContent = 'Ищу QR-код в рамке…';
+  if (!await findIn(photo.img, { x: x1, y: y1, w: x2 - x1, h: y2 - y1 }) && photo) ui.scanHint.textContent = NOT_FOUND;
 }
 
 async function saveReceipt(raw) {
@@ -749,7 +885,11 @@ function wire() {
   ui.btnBack.addEventListener('click', () => history.back());
   ui.btnScan.addEventListener('click', openScan);
   ui.btnScanClose.addEventListener('click', closeScan);
-  ui.scanDlg.addEventListener('close', stopCamera);          // «Назад» телефона тоже закрывает окно
+  ui.scanDlg.addEventListener('close', () => { stopCamera(); hidePhoto(); });   // «Назад» телефона тоже закрывает окно
+  ui.scanCanvas.addEventListener('pointerdown', photoDown);
+  ui.scanCanvas.addEventListener('pointermove', photoMove);
+  ui.scanCanvas.addEventListener('pointerup', photoUp);
+  ui.scanCanvas.addEventListener('pointercancel', photoUp);
   // «Снять» — сразу камера, «Галерея» — готовый снимок чека (задача 5)
   ui.btnScanPhoto.addEventListener('click', () => ui.filePhoto.click());
   ui.btnScanGallery.addEventListener('click', () => ui.fileGallery.click());
