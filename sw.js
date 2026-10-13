@@ -2,7 +2,7 @@
 // Стратегия «сначала кэш»: файлы берутся из кэша, сеть — только если файла там нет.
 // Выпускаете новую версию — увеличьте VERSION, иначе телефон продолжит показывать старую.
 
-const VERSION = 'zahvat-v6';
+const VERSION = 'zahvat-v7';   // та же цифра — APP_VERSION в app.js (видна в меню)
 const SHELL = [
   './',
   './index.html',
@@ -15,10 +15,14 @@ const SHELL = [
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
+  './lib/jsQR.js',
 ];
 
 self.addEventListener('install', (ev) => {
-  ev.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'reload' — мимо кэша браузера, иначе новая версия могла взять старые файлы (задача 5)
+  ev.waitUntil(caches.open(VERSION)
+    .then(c => c.addAll(SHELL.map(url => new Request(url, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 // Новая версия включилась — удаляем старые кэши

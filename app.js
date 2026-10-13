@@ -10,6 +10,8 @@ import {
 } from './core.js';
 import { Dictation } from './speech.js';
 
+/** Версия программы — показывается в меню; поднимается вместе с VERSION в sw.js. */
+const APP_VERSION = 7;
 const $ = (id) => document.getElementById(id);
 const ui = {
   text: $('text'), interim: $('interim'), mic: $('btnMic'), save: $('btnSave'), clear: $('btnClear'), status: $('status'),
@@ -413,16 +415,15 @@ async function removeEntry(e) {
 // Камера читает QR-код кассового чека встроенным распознавателем Chrome (BarcodeDetector).
 // Запись — «Чек: t=…&s=…&fn=…&i=…&fp=…&n=1»: позиции и статьи подберёт компьютер.
 
-let detector = null;       // распознаватель QR (создаётся при первом открытии)
+let detector = null;       // распознаватель QR Chrome (если он есть в телефоне)
+let jsQRready = null;      // второй распознаватель — библиотека jsQR (lib/jsQR.js), грузится при первом поиске
 let scanStream = null;     // видео с камеры, пока открыт сканер
 let scanTimer = 0;
 
 async function openScan() {
-  if (!('BarcodeDetector' in window)) {
-    showToast('Этот браузер не читает QR-коды — нужен Chrome на Android');
-    return;
+  if (!detector && 'BarcodeDetector' in window) {
+    try { detector = new BarcodeDetector({ formats: ['qr_code'] }); } catch { /* нет — справится jsQR */ }
   }
-  detector ??= new BarcodeDetector({ formats: ['qr_code'] });
   ui.scanHint.textContent = 'Наведите камеру на QR-код чека';
   hidePhoto();
   ui.scanDlg.showModal();
@@ -441,9 +442,52 @@ async function openScan() {
 async function scanLoop() {
   if (!scanStream) return;
   try {
-    if (await takeCodes(await detector.detect(ui.scanVideo))) return;
+    const codes = detector ? await detector.detect(ui.scanVideo) : await readCodes(videoFrame());
+    if (await takeCodes(codes)) return;
   } catch { /* кадр ещё не готов — попробуем следующий */ }
   scanTimer = setTimeout(scanLoop, 250);
+}
+
+/** Кадр видео на холсте (длинная сторона до 800 точек) — для jsQR, если распознавателя Chrome нет. */
+function videoFrame() {
+  const v = ui.scanVideo;
+  if (!v.videoWidth) throw new Error('кадра ещё нет');
+  const k = Math.min(1, 800 / Math.max(v.videoWidth, v.videoHeight));
+  const c = document.createElement('canvas');
+  c.width = Math.round(v.videoWidth * k);
+  c.height = Math.round(v.videoHeight * k);
+  c.getContext('2d', { willReadFrequently: true }).drawImage(v, 0, 0, c.width, c.height);
+  return c;
+}
+
+/** Загрузить jsQR один раз (файл лежит в программе, работает и без сети). */
+function loadJsQR() {
+  jsQRready ??= new Promise((ok, fail) => {
+    const s = document.createElement('script');
+    s.src = 'lib/jsQR.js';
+    s.onload = () => ok(window.jsQR);
+    s.onerror = () => { jsQRready = null; fail(new Error('jsQR не загрузился')); };
+    document.head.append(s);
+  });
+  return jsQRready;
+}
+
+/** QR-коды на холсте: сначала распознаватель Chrome, не нашёл — jsQR (задача 5). Вернёт [{ rawValue }]. */
+async function readCodes(canvas) {
+  if (detector) {
+    try {
+      const codes = await detector.detect(canvas);
+      if (codes.length) return codes;
+    } catch { /* попробуем jsQR */ }
+  }
+  try {
+    const jsQR = await loadJsQR();
+    const img = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height);
+    const found = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+    return found ? [{ rawValue: found.data }] : [];
+  } catch {
+    return [];
+  }
 }
 
 /** Найден QR-код чека → закрыть сканер и сохранить; чужой QR — подсказка. */
@@ -520,12 +564,8 @@ async function findIn(img, r) {
   const c = document.createElement('canvas');
   c.width = Math.max(1, Math.round(r.w * k));
   c.height = Math.max(1, Math.round(r.h * k));
-  c.getContext('2d').drawImage(img, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
-  try {
-    return await takeCodes(await detector.detect(c));
-  } catch {
-    return false;
-  }
+  c.getContext('2d', { willReadFrequently: true }).drawImage(img, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
+  return takeCodes(await readCodes(c));
 }
 
 /** Показать снимок на месте видео — целиком, по центру, с рамкой. */
@@ -786,7 +826,7 @@ async function openMenu() {
   const fresh = entries.filter(e => !e.exportedAt).length;
   const last = await db.getSetting('lastExportAt');
   ui.menuInfo.textContent = `Новых: ${fresh} · всего: ${entries.length}\n` +
-    `Последняя выгрузка: ${last ? formatShort(last) : 'ещё не было'}`;
+    `Последняя выгрузка: ${last ? formatShort(last) : 'ещё не было'}\nВерсия ${APP_VERSION}`;
   ui.listsInfo.textContent = lists.loadedAt
     ? `Счетов ${lists.accounts.length}, статей ${lists.cats.length} · загружено ${formatShort(lists.loadedAt)}`
     : 'Сейчас примеры — загрузите файл из модуля Финансов';
@@ -976,6 +1016,11 @@ async function init() {
   }
   render();
   if ('serviceWorker' in navigator) {
+    // Пришла новая версия — перезагрузиться сразу, если ничего не набрано (иначе подхватится при следующем открытии)
+    const hadOld = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadOld && !ui.text.value.trim() && !document.querySelector('dialog[open]')) location.reload();
+    });
     navigator.serviceWorker.register('sw.js').catch(() => { /* без офлайна, но работает */ });
   }
 }
