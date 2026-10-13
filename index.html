@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- «Захват» (задачи 1, 2, 3, 4): поле для голоса и текста, метки-иконки, расход кнопками, последние записи, меню (все записи, счета, выгрузка), чек по QR-коду. -->
+<!-- «Захват» (задачи 1, 2, 3, 4, 5): поле для голоса и текста, метки-иконки, расход кнопками, последние записи, меню (все записи, счета, выгрузка), чек по QR-коду. -->
 <html lang="ru">
 <head>
   <meta charset="utf-8">
@@ -147,13 +147,14 @@
     </form>
   </dialog>
 
-  <!-- Чек по QR (задача 4): видео с камеры; не читается — «Фото» (снимок или картинка из галереи) -->
+  <!-- Чек по QR (задачи 4, 5): видео с камеры; не читается — «Снять» (фото камерой) или «Галерея» (готовый снимок) -->
   <dialog id="scanDlg" class="scan" aria-labelledby="scanTitle">
     <h2 id="scanTitle">Чек</h2>
     <video id="scanVideo" playsinline muted></video>
     <p id="scanHint" class="hint">Наведите камеру на QR-код чека</p>
-    <div class="dlg-actions">
-      <button id="btnScanPhoto" type="button">Фото</button>
+    <div class="dlg-actions three">
+      <button id="btnScanPhoto" type="button">Снять</button>
+      <button id="btnScanGallery" type="button" aria-label="Выбрать снимок чека из галереи">Галерея</button>
       <button id="btnScanClose" type="button" class="ghost">Закрыть</button>
     </div>
   </dialog>
@@ -161,5 +162,6 @@
   <input id="fileRestore" type="file" accept=".json,application/json" hidden>
   <input id="fileLists" type="file" accept=".txt,text/plain" hidden>
   <input id="filePhoto" type="file" accept="image/*" capture="environment" hidden>
+  <input id="fileGallery" type="file" accept="image/*" hidden>
 </body>
 </html>

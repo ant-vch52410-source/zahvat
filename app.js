@@ -1,4 +1,4 @@
-// «Захват» — экран и действия (задачи 1, 2, 3, 4): ввод, метки-иконки, расход кнопками, последние записи,
+// «Захват» — экран и действия (задачи 1, 2, 3, 4, 5): ввод, метки-иконки, расход кнопками, последние записи,
 // все записи с поиском и правкой, загрузка счетов и статей, выгрузка CSV, резервная копия, чек по QR-коду.
 
 import * as db from './db.js';
@@ -23,6 +23,7 @@ const ui = {
   file: $('fileRestore'), fileLists: $('fileLists'),
   btnScan: $('btnScan'), scanDlg: $('scanDlg'), scanVideo: $('scanVideo'), scanHint: $('scanHint'),
   btnScanPhoto: $('btnScanPhoto'), btnScanClose: $('btnScanClose'), filePhoto: $('filePhoto'),
+  btnScanGallery: $('btnScanGallery'), fileGallery: $('fileGallery'),
 };
 
 const DRAFT_KEY = 'zahvat.draft';       // черновик (текст, метка, сумма, статья) — в localStorage: пишется мгновенно
@@ -430,7 +431,7 @@ async function openScan() {
     ui.scanVideo.play().catch(() => {});   // не ждём: пока кадра нет, поиск просто повторяется
     scanLoop();
   } catch {
-    ui.scanHint.textContent = 'Камера недоступна — снимите чек кнопкой «Фото»';
+    ui.scanHint.textContent = 'Камера недоступна — снимите чек («Снять») или выберите снимок («Галерея»)';
   }
 }
 
@@ -468,7 +469,7 @@ function closeScan() {
   if (ui.scanDlg.open) ui.scanDlg.close();
 }
 
-/** «Фото»: снимок камерой телефона или картинка из галереи. */
+/** «Снять» или «Галерея» (задача 5): снимок камерой телефона или готовая картинка — ищем на ней QR-код. */
 async function scanPhoto(file) {
   ui.scanHint.textContent = 'Ищу QR-код на фото…';
   try {
@@ -749,12 +750,16 @@ function wire() {
   ui.btnScan.addEventListener('click', openScan);
   ui.btnScanClose.addEventListener('click', closeScan);
   ui.scanDlg.addEventListener('close', stopCamera);          // «Назад» телефона тоже закрывает окно
+  // «Снять» — сразу камера, «Галерея» — готовый снимок чека (задача 5)
   ui.btnScanPhoto.addEventListener('click', () => ui.filePhoto.click());
-  ui.filePhoto.addEventListener('change', async () => {
-    const f = ui.filePhoto.files[0];
-    ui.filePhoto.value = '';
-    if (f) await scanPhoto(f);
-  });
+  ui.btnScanGallery.addEventListener('click', () => ui.fileGallery.click());
+  for (const input of [ui.filePhoto, ui.fileGallery]) {
+    input.addEventListener('change', async () => {
+      const f = input.files[0];
+      input.value = '';
+      if (f) await scanPhoto(f);
+    });
+  }
   window.addEventListener('popstate', () => { if (!ui.allView.hidden) closeAll(); });
   ui.search.addEventListener('input', () => { editingId = null; renderFeed(); });
 

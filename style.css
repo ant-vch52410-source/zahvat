@@ -1,4 +1,4 @@
-/* Оформление «Захвата» (задачи 1, 2, 3). Светлая/тёмная тема — по настройке телефона. */
+/* Оформление «Захвата» (задачи 1, 2, 3, 5). Светлая/тёмная тема — по настройке телефона. */
 
 :root {
   --bg: #f4f5f7;
@@ -248,6 +248,7 @@ fieldset input { width: 22px; height: 22px; }
 }
 .hint { color: var(--muted); font-size: 14px; }
 .dlg-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dlg-actions.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .dlg-actions .ghost { border-color: transparent; color: var(--muted); }
 
 @media (prefers-reduced-motion: reduce) {
