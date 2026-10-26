@@ -5,6 +5,7 @@ import {
   mergeEntries, normalizeEntry, joinTranscripts, appendPhrase, normalizeForSearch, isSameDay,
   applyTag, splitTag, parseLists, typeAmount, formatAmount, financeText, parseReceiptQr, receiptLabel,
 } from '../core.js';
+import { Dictation } from '../speech.js';
 
 const results = [];
 function test(name, fn) {
@@ -157,7 +158,7 @@ test('Голос: куски сессии склеиваются через пр
 });
 test('Голос: накопительные результаты Android не задваиваются', () => {
   eq(joinTranscripts(['виза 500', 'виза 500 кальян']), 'виза 500 кальян');
-  eq(joinTranscripts(['кальян', 'кальян']), 'кальян');
+  eq(joinTranscripts(['кальян', 'кальян']), 'кальян кальян', 'отдельные одинаковые фразы сохраняются:');
 });
 test('appendPhrase: без двойных пробелов', () => {
   eq(appendPhrase('', 'раз'), 'раз');
@@ -165,6 +166,158 @@ test('appendPhrase: без двойных пробелов', () => {
   eq(appendPhrase('раз ', 'два'), 'раз два');
   eq(appendPhrase('раз', ''), 'раз');
 });
+
+// Ответы браузера проверяем без микрофона: подставляем управляемый распознаватель.
+function withDictation(fn, initial = '') {
+  const descriptor = Object.getOwnPropertyDescriptor(window, 'SpeechRecognition');
+  const instances = [];
+  class FakeRecognition {
+    constructor() { instances.push(this); }
+    start() { this.started = true; }
+    stop() { this.stopped = true; }
+    abort() { this.aborted = true; }
+    result(parts, resultIndex = 0) {
+      this.onresult({ resultIndex, results: parts.map(([text, final]) =>
+        Object.assign([{ transcript: text }], { isFinal: final })) });
+    }
+    end() { this.onend(); }
+  }
+  Object.defineProperty(window, 'SpeechRecognition', { value: FakeRecognition, writable: true, configurable: true });
+  let text = initial, base = '', interim = '', bases = 0;
+  const errors = [];
+  const d = new Dictation({
+    onSessionStart() { base = text; bases++; },
+    onFinal(phrase) { text = appendPhrase(base, phrase); },
+    onInterim(phrase) { interim = phrase; }, onState() {}, onError(e) { errors.push(e); },
+  });
+  const state = { d, instances, errors, get text() { return text; }, set text(t) { text = t; },
+    get interim() { return interim; }, get bases() { return bases; } };
+  try { d.start(); fn(state); }
+  finally {
+    d.cancel();
+    if (descriptor) Object.defineProperty(window, 'SpeechRecognition', descriptor);
+    else delete window.SpeechRecognition;
+  }
+}
+
+test('Голос: перекрытие нескольких слов и новая пунктуация', () => {
+  eq(joinTranscripts(['сегодня купил продукты и заехал домой', 'заехал домой потом позвонил другу']),
+    'сегодня купил продукты и заехал домой потом позвонил другу');
+  eq(joinTranscripts(['купил хлеб молоко', 'Купил хлеб, молоко и сыр']), 'Купил хлеб, молоко и сыр');
+  eq(joinTranscripts(['всё готово', 'Все готово, можно ехать']), 'Все готово, можно ехать');
+});
+test('Голос: намеренные повторы слов и одинаковых фраз не удаляются', () => {
+  eq(joinTranscripts(['нет', 'нет']), 'нет нет');
+  eq(joinTranscripts(['очень', 'очень хорошо']), 'очень очень хорошо', 'намеренный повтор:');
+  eq(joinTranscripts(['хочу домой', 'хочу домой']), 'хочу домой хочу домой');
+  withDictation(s => {
+    s.d.rec.result([['нет', true], ['нет', true]]);
+    eq(s.text, 'нет нет', 'разные индексы — отдельные слова:');
+  });
+});
+test('Голос: режим отдельных фраз и повторный start', () => withDictation(s => {
+  eq(s.d.rec.continuous, false);
+  eq(s.d.rec.lang, 'ru-RU');
+  s.d.start();
+  eq(s.instances.length, 1);
+}));
+test('Голос: длинная диктовка и 100 повторных событий не размножают текст', () => withDictation(s => {
+  const phrase = Array.from({ length: 90 }, (_, i) => 'слово' + i).join(' ');
+  for (let i = 0; i < 100; i++) s.d.rec.result([[phrase, true]]);
+  eq(s.text, phrase);
+}));
+test('Голос: resultIndex обновляет нужный фрагмент', () => withDictation(s => {
+  s.d.rec.result([['купил хлеб', true], ['и', false]]);
+  s.d.rec.result([['купил хлеб', true], ['и молоко', false]], 1);
+  eq(s.text, 'купил хлеб'); eq(s.interim, 'и молоко');
+  s.d.rec.result([['купил хлеб', true], ['и молоко', true]], 1);
+  eq(s.text, 'купил хлеб и молоко'); eq(s.interim, '');
+}));
+test('Голос: промежуточный текст заменяется и может исчезнуть', () => withDictation(s => {
+  s.d.rec.result([['заехать', false]]);
+  s.d.rec.result([['заехать домой', false]]);
+  eq(s.text, ''); eq(s.interim, 'заехать домой');
+  s.d.rec.result([]);
+  eq(s.interim, '');
+  s.d.finish(); eq(s.text, '');
+}));
+test('Голос: накопительный interim сохраняется один раз с новой пунктуацией', () => withDictation(s => {
+  s.d.rec.result([['купил хлеб молоко', true], ['Купил хлеб, молоко и сыр', false]]);
+  eq(s.interim, 'и сыр');
+  s.d.finish();
+  eq(s.text, 'Купил хлеб, молоко и сыр'); eq(s.interim, '');
+  eq(s.d.recording, false);
+}));
+test('Голос: частичное перекрытие окончательных фрагментов', () => withDictation(s => {
+  s.d.rec.result([['сегодня заехал домой', true], ['заехал домой потом позвонил другу', true]]);
+  eq(s.text, 'сегодня заехал домой потом позвонил другу');
+}));
+test('Голос: перезапуски не меняют базу поля и не повторяют накопительную фразу', () => withDictation(s => {
+  const first = s.d.rec;
+  first.result([['сегодня купил продукты', true]]); first.end();
+  s.d.rec.result([['сегодня купил продукты и заехал домой', true]]);
+  eq(s.text, 'Заметка: сегодня купил продукты и заехал домой');
+  eq(s.bases, 1);
+  first.result([['поздний старый ответ', true]]); first.end();
+  eq(s.text, 'Заметка: сегодня купил продукты и заехал домой');
+}, 'Заметка:'));
+test('Голос: паузы между 12 короткими фразами не вызывают защиту от сбоев', () => withDictation(s => {
+  for (let i = 0; i < 12; i++) {
+    s.d.rec.result([['фраза' + i, true]]); s.d.rec.end();
+  }
+  eq(s.errors, []); eq(s.d.recording, true);
+  eq(s.text.split(' ').length, 12);
+}));
+test('Голос: после паузы сохраняется последнее предварительное распознавание', () => withDictation(s => {
+  s.d.rec.result([['успеть заехать домой', false]]); s.d.rec.end();
+  eq(s.text, 'успеть заехать домой'); eq(s.interim, '');
+  s.d.rec.result([['потом позвонить другу', true]]);
+  eq(s.text, 'успеть заехать домой потом позвонить другу');
+}));
+test('Голос: стоп принимает итоговый ответ без нового запуска', () => withDictation(s => {
+  const rec = s.d.rec;
+  rec.result([['купил', false]]); s.d.stop();
+  rec.result([['купил хлеб', true]]); rec.end();
+  eq(s.text, 'купил хлеб'); eq(s.instances.length, 1); eq(s.d.recording, false);
+}));
+test('Голос: сохранение сразу после стопа учитывает серый текст', () => withDictation(s => {
+  const rec = s.d.rec;
+  rec.result([['купил хлеб', false]]); s.d.stop();
+  eq(s.d.recording, true, 'результат ещё ожидается:');
+  s.d.finish();
+  rec.result([['запоздалый ответ', true]]); rec.end();
+  eq(s.text, 'купил хлеб'); eq(s.instances.length, 1);
+}));
+test('Голос: ручная правка не отменяется запоздалыми ответами', () => withDictation(s => {
+  const rec = s.d.rec;
+  rec.result([['неверное слово', true]]);
+  s.text = 'исправленный текст'; s.d.resetSession();
+  rec.result([['неверное слово снова', true]]); rec.end();
+  s.d.rec.result([['продолжение', true]]);
+  eq(s.text, 'исправленный текст продолжение');
+}));
+test('Голос: cancel отбрасывает ответы и не перезапускает запись', () => withDictation(s => {
+  const rec = s.d.rec;
+  rec.result([['не сохранять', false]]); s.d.cancel();
+  rec.result([['не сохранять', true]]); rec.end();
+  eq(s.text, ''); eq(s.interim, ''); eq(s.instances.length, 1);
+}));
+test('Голос: старый onend не стирает промежуточный текст новой записи', () => withDictation(s => {
+  const old = s.d.rec;
+  s.d.cancel(); s.d.start();
+  s.d.rec.result([['новый текст', false]]); old.end();
+  eq(s.interim, 'новый текст');
+}));
+test('Голос: ошибка сети сохраняет услышанное и останавливает перезапуски', () => withDictation(s => {
+  const rec = s.d.rec;
+  rec.result([['услышанный текст', false]]); rec.onerror({ error: 'network' }); rec.end();
+  eq(s.text, 'услышанный текст'); eq(s.d.recording, false);
+  eq(s.errors.length, 1); eq(s.instances.length, 1);
+}));
+test('Голос: пять пустых мгновенных сеансов останавливают перезапуски', () => withDictation(s => {
+  for (let i = 0; i < 5; i++) s.d.rec.end();
+  eq(s.d.recording, false); eq(s.errors.length, 1);
+}));
 
 // ---- Метки ----
 test('Метка: «Финансы» + текст → «Финансы: текст»', () => {

@@ -1,14 +1,8 @@
-// Голосовой ввод «Захвата» (задача 1): Web Speech API в Chrome, русский язык.
-//
-// Как устроено:
-// - нажали микрофон → start(): создаём распознавание и слушаем;
-// - Chrome на Android сам обрывает сессию через несколько секунд тишины → onend → запускаем заново,
-//   пока пользователь не нажал «стоп» (this.wanted);
-// - каждая такая сессия — отдельный кусок: приложение по onSessionStart запоминает текст поля,
-//   а по onFinal дописывает к нему распознанное в этой сессии;
-// - промежуточный (ещё не окончательный) текст отдаём через onInterim — его показываем серым.
+// Голосовой ввод: отдельные фразы вместо нестабильного continuous на Android.
+// Один ручной запуск — одна база текста. Автоматические сеансы обновляют общий результат,
+// каждый индекс results хранится один раз; предварительный текст заменяется, а не дописывается.
 
-import { joinTranscripts } from './core.js';
+import { joinTranscripts, transcriptRemainder } from './core.js';
 
 const GBOARD_HINT = 'Можно нажать на микрофон на клавиатуре Gboard — это тоже голосовой ввод в текстовое поле.';
 
@@ -36,20 +30,27 @@ export function isSpeechSupported() {
 export class Dictation {
   constructor({ onSessionStart, onFinal, onInterim, onState, onError }) {
     Object.assign(this, { onSessionStart, onFinal, onInterim, onState, onError });
-    this.wanted = false;      // пользователь хочет, чтобы запись шла
+    this.wanted = false;
     this.rec = null;
-    this.quickEnds = 0;       // сколько раз подряд сессия оборвалась сразу после старта
+    this.quickEnds = 0;
+    this.prefix = '';
+    this.previewText = '';
   }
 
-  get recording() { return this.wanted; }
+  // rec может ещё отдавать окончательный результат после нажатия «стоп».
+  get recording() { return this.wanted || !!this.rec; }
 
   toggle() { this.wanted ? this.stop() : this.start(); }
 
   start() {
+    if (this.wanted) return;
     const Rec = recognitionClass();
     if (!Rec) { this.onError(UNSUPPORTED_MESSAGE); return; }
+    if (this.rec) this.finish();
+    this.prefix = this.previewText = '';
     this.wanted = true;
     this.quickEnds = 0;
+    this.onSessionStart();
     this.onState(true);
     this._startSession();
   }
@@ -57,65 +58,88 @@ export class Dictation {
   stop() {
     this.wanted = false;
     this.onState(false);
-    if (this.rec) { try { this.rec.stop(); } catch { /* уже остановлено */ } }
+    if (this.rec) {
+      try { this.rec.stop(); }
+      catch { this.finish(); }
+    }
   }
 
-  /** Остановить и забыть то, что ещё не пришло (при сохранении во время записи). */
+  /** Сохранить последний предварительный результат и отсечь все запоздалые события. */
+  finish() {
+    this._commitPreview();
+    this.cancel();
+  }
+
+  /** Остановить и забыть ожидаемые результаты (например, при «Стереть»). */
   cancel() {
     const rec = this.rec;
     this.rec = null;
     this.wanted = false;
+    this.prefix = this.previewText = '';
     this.onState(false);
     this.onInterim('');
     if (rec) { try { rec.abort(); } catch { /* уже остановлено */ } }
   }
 
-  /** Пользователь сам правил поле во время записи: дальше дописываем только новое. */
+  /** После ручной правки не возвращаем старую гипотезу поверх исправленного текста. */
   resetSession() {
-    this.consumed = this.finals ? this.finals.length : 0;
+    const rec = this.rec;
+    this.rec = null;
+    if (rec) { try { rec.abort(); } catch { /* уже остановлено */ } }
+    this.prefix = this.previewText = '';
+    this.onInterim('');
     this.onSessionStart();
+    if (this.wanted) this._startSession();
+  }
+
+  _commitPreview() {
+    this.prefix = this.previewText;
+    if (this.prefix) this.onFinal(this.prefix);
+    this.onInterim('');
   }
 
   _startSession() {
     const Rec = recognitionClass();
     const rec = new Rec();
     rec.lang = 'ru-RU';
-    rec.continuous = true;
+    rec.continuous = false;
     rec.interimResults = true;
     rec.maxAlternatives = 1;
     this.rec = rec;
-    this.finals = [];
-    this.consumed = 0;
-    this.startedAt = Date.now();
-    this.onSessionStart();
+    const slots = [];
+    const startedAt = Date.now();
 
     rec.onresult = (ev) => {
-      if (this.rec !== rec) return;   // сессию уже отменили
-      // Собираем все результаты сессии заново: окончательные — в текст, остальные — серым
-      const finals = [], interim = [];
-      for (let i = 0; i < ev.results.length; i++) {
+      if (this.rec !== rec) return;
+      // results — снимок текущего сеанса; resultIndex указывает первое изменение.
+      // Обрезаем исчезнувшие interim, прежние final сохраняем по их индексам.
+      slots.length = ev.results.length;
+      for (let i = ev.resultIndex ?? 0; i < ev.results.length; i++) {
         const r = ev.results[i];
-        (r.isFinal ? finals : interim).push(r[0].transcript);
+        slots[i] = { text: r[0].transcript, final: r.isFinal };
       }
-      this.finals = finals;
-      const text = joinTranscripts(finals.slice(this.consumed));
-      if (text) this.onFinal(text);
-      this.onInterim(joinTranscripts(interim));
+      const finals = slots.filter(r => r?.final).map(r => r.text);
+      const all = slots.filter(Boolean).map(r => r.text);
+      const finalText = joinTranscripts([this.prefix, joinTranscripts(finals)]);
+      this.previewText = joinTranscripts([this.prefix, joinTranscripts(all)]);
+      if (finalText) this.onFinal(finalText);
+      this.onInterim(transcriptRemainder(finalText, this.previewText));
     };
 
     rec.onerror = (ev) => {
-      // «тишина» и «прервано» — обычное дело, просто перезапустимся
       if (this.rec !== rec || ev.error === 'no-speech' || ev.error === 'aborted') return;
-      this.wanted = false;
-      this.onState(false);
+      this.finish();
       this.onError(ERRORS[ev.error] || `Ошибка распознавания (${ev.error}). ${GBOARD_HINT}`);
     };
 
     rec.onend = () => {
-      this.onInterim('');
-      if (this.rec !== rec || !this.wanted) return;
-      // Защита от бесконечных мгновенных перезапусков (например, микрофон отдан другому приложению)
-      this.quickEnds = Date.now() - this.startedAt < 1000 ? this.quickEnds + 1 : 0;
+      if (this.rec !== rec) return;
+      this._commitPreview();
+      this.rec = null;
+      if (!this.wanted) return;
+      // Короткая успешно распознанная фраза не считается сбоем запуска.
+      const hadSpeech = slots.some(r => r?.text.trim());
+      this.quickEnds = !hadSpeech && Date.now() - startedAt < 1000 ? this.quickEnds + 1 : 0;
       if (this.quickEnds >= 5) {
         this.stop();
         this.onError('Распознавание всё время обрывается. Попробуйте ещё раз. ' + GBOARD_HINT);
@@ -125,7 +149,8 @@ export class Dictation {
     };
 
     try { rec.start(); }
-    catch (err) {
+    catch {
+      this.rec = null;
       this.wanted = false;
       this.onState(false);
       this.onError('Не удалось включить микрофон. ' + GBOARD_HINT);

@@ -11,7 +11,7 @@ import {
 import { Dictation } from './speech.js';
 
 /** Версия программы — показывается в меню; поднимается вместе с VERSION в sw.js. */
-const APP_VERSION = 7;
+const APP_VERSION = 8;
 const $ = (id) => document.getElementById(id);
 const ui = {
   text: $('text'), interim: $('interim'), mic: $('btnMic'), save: $('btnSave'), clear: $('btnClear'), status: $('status'),
@@ -208,10 +208,8 @@ function resetInput() {
 
 async function saveEntry() {
   if (dictation.recording || ui.interim.textContent) {
-    // Недоговорённое (серый текст) тоже сохраняем, запись голоса останавливаем
-    const pending = ui.interim.textContent;
-    dictation.cancel();
-    if (pending) { ui.text.value = appendPhrase(ui.text.value, pending); draftVoice = true; }
+    // Dictation сам объединяет окончательный и предварительный текст без повторов.
+    dictation.finish();
   }
   const raw = ui.text.value.trim();
   const isFin = selectedTag === FIN_TAG && hasAmount();

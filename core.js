@@ -177,22 +177,46 @@ export function appendPhrase(base, phrase) {
   return base + ' ' + phrase;
 }
 
+/** Слова и их позиции: пунктуация и ё/е не мешают сравнивать результаты речи. */
+function speechWords(text) {
+  return [...text.matchAll(/[\p{L}\p{N}]+/gu)].map(m => ({
+    value: m[0].toLowerCase().replace(/ё/g, 'е'), start: m.index, end: m.index + m[0].length,
+  }));
+}
+
 /**
- * Собрать текст из результатов распознавания одной сессии.
- * Chrome на Android в режиме continuous иногда присылает «накопительные» результаты:
- * следующий кусок уже содержит предыдущий. Тогда не дописываем, а заменяем — иначе слова задвоятся.
+ * Склеить фрагменты речи с перекрытием. Повторные события устраняет Dictation по индексу,
+ * а здесь учитываются накопительные ответы Android с изменившейся пунктуацией.
+ * Совпадающие целиком самостоятельные фразы сохраняем: это может быть намеренный повтор.
+ * Частичное перекрытие убираем только от двух слов и только если за ним есть новый текст.
  */
 export function joinTranscripts(parts) {
   let acc = '';
-  for (const p of parts) {
-    const t = (p || '').trim();
-    if (!t) continue;
-    const a = acc.toLowerCase(), b = t.toLowerCase();
-    if (a && b.startsWith(a)) acc = t;          // новый кусок включает старый
-    else if (a.endsWith(b)) continue;           // повтор того же куска
-    else acc = appendPhrase(acc, t);
+  for (const part of parts) {
+    const text = (part || '').trim();
+    if (!text) continue;
+    if (!acc) { acc = text; continue; }
+    const a = speechWords(acc), b = speechWords(text);
+    let overlap = 0;
+    for (let n = Math.min(a.length, b.length - 1); n > 0; n--) {
+      if (n < 2) break;
+      if (a.slice(-n).every((w, i) => w.value === b[i].value)) { overlap = n; break; }
+    }
+    if (overlap === a.length && overlap) acc = text;
+    else if (overlap) acc = appendPhrase(acc, text.slice(b[overlap].start));
+    else acc = appendPhrase(acc, text);
   }
   return acc;
+}
+
+/** Только новая часть предварительного текста — без повторения уже показанного. */
+export function transcriptRemainder(finalText, previewText) {
+  if (!finalText) return previewText;
+  const a = speechWords(finalText), b = speechWords(previewText);
+  if (a.length && a.every((w, i) => w.value === b[i]?.value)) {
+    return b[a.length] ? previewText.slice(b[a.length].start) : '';
+  }
+  return previewText.startsWith(finalText) ? previewText.slice(finalText.length).trim() : previewText;
 }
 
 /** Для поиска: регистр и «ё» не важны. */
