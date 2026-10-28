@@ -102,8 +102,8 @@ try {
   await evaluate(`window.__speechInstances.at(-1).result([['старый ответ', true]]); window.__speechInstances.at(-1).end()`);
   assert.equal(await evaluate('document.querySelector("#text").value'), '');
   await evaluate(`document.querySelector('#btnMenu').click()`);
-  await until(() => evaluate('document.body.innerText.includes("Версия 9")'), 'загрузка меню');
-  assert.ok((await evaluate('caches.keys()')).includes('zahvat-v9'));
+  await until(() => evaluate('document.body.innerText.includes("Версия 9.1")'), 'загрузка меню');
+  assert.ok((await evaluate('caches.keys()')).includes('zahvat-v9.1'));
 
   await evaluate(`document.querySelector('#btnMenu').click()`);
   assert.equal(await evaluate(`document.querySelectorAll('#tags button').length`),6);
@@ -149,8 +149,11 @@ try {
   }
   await evaluate(`document.querySelector('#showAll').click()`);
   const allShot=await call('Page.captureScreenshot',{format:'png'});await writeFile(join(root,'tests','screenshots','Все записи.png'),Buffer.from(allShot.data,'base64'));
+  await evaluate(`document.querySelector('#btnMic').click()`);
+  assert.equal(await evaluate(`document.querySelector('#homeView').hidden`),false);
+  assert.equal(await evaluate(`document.querySelector('#btnMic').getAttribute('aria-pressed')`),'true');
   console.log('Все 6 разделов: сохранение полей в IndexedDB, дата, перевод, CSV/копия, уникальные id, микрофон и ширина 360 — OK');
-  console.log('Edge: HTTP 200, ввод 90 слов, 100 повторных событий, пауза, сохранение в IndexedDB и версия 9 — OK');
+  console.log('Edge: HTTP 200, ввод 90 слов, 100 повторных событий, пауза, сохранение в IndexedDB и версия 9.1 — OK');
 } finally {
   if (socket?.readyState === WebSocket.OPEN) {
     await call('Browser.close').catch(() => {});

@@ -13,7 +13,7 @@ import { Dictation } from './speech.js';
 import { CaptureForm, SECTIONS, recordKind, recordText } from './capture.js';
 
 /** Версия программы — показывается в меню; поднимается вместе с VERSION в sw.js. */
-const APP_VERSION = 9;
+const APP_VERSION = 9.1;
 const $ = (id) => document.getElementById(id);
 const ui = {
   text: $('text'), interim: $('interim'), mic: $('btnMic'), save: $('btnSave'), clear: $('btnClear'), status: $('status'),
@@ -700,7 +700,7 @@ async function saveReceipt(raw) {
     showToast('Не удалось сохранить чек: ' + (err && err.message || err));
     return;
   }
-  structuredEditing=null;entries=entries.filter(e=>e.id!==entry.id);entries.push(entry);
+  entries=entries.filter(e=>e.id!==entry.id);entries.push(entry);
   render();
   showToast(`Чек сохранён: ${receiptLabel(raw)}`);
 }
@@ -914,7 +914,7 @@ function wire() {
   ui.text.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); saveEntry(); }
   });
-  ui.mic.addEventListener('click', () => dictation.toggle());
+  ui.mic.addEventListener('click', () => {if(!ui.allView.hidden){closeAll();history.replaceState({view:'home'},'');}dictation.toggle();});
   // Метки не забирают фокус у поля (клавиатура не прячется), повторное нажатие снимает выбор
   ui.tags.addEventListener('mousedown', (ev) => { if (ev.target.closest('.tag')) ev.preventDefault(); });
   ui.tags.addEventListener('click', (ev) => {
