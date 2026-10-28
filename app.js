@@ -1,3 +1,4 @@
+// Шесть разделов и структурированный обмен с Органайзером (задача 7).
 // «Захват» — экран и действия (задачи 1, 2, 3, 4, 5): ввод, метки-иконки, расход кнопками, последние записи,
 // все записи с поиском и правкой, загрузка счетов и статей, выгрузка CSV, резервная копия, чек по QR-коду.
 
@@ -9,9 +10,10 @@ import {
   RECEIPT_TAG, parseReceiptQr, receiptLabel,
 } from './core.js';
 import { Dictation } from './speech.js';
+import { CaptureForm, SECTIONS, recordKind, recordText } from './capture.js';
 
 /** Версия программы — показывается в меню; поднимается вместе с VERSION в sw.js. */
-const APP_VERSION = 8;
+const APP_VERSION = 9;
 const $ = (id) => document.getElementById(id);
 const ui = {
   text: $('text'), interim: $('interim'), mic: $('btnMic'), save: $('btnSave'), clear: $('btnClear'), status: $('status'),
@@ -34,7 +36,7 @@ const ACCOUNT_KEY = 'zahvat.account';   // последний выбранный
 const FIN_TAG = 'Финансы';
 const NOTE_TAG = 'Заметка';             // запись без выбранной метки
 // Метки, которые узнаются в ленте: нынешние и старые (до задачи 3 были «Идея» и «Задача»)
-const KNOWN_TAGS = ['Финансы', 'Идеи', 'Мысли', 'Заметка', 'Идея', 'Задача', RECEIPT_TAG];
+const KNOWN_TAGS = ['Финансы', 'Идеи', 'Мысли', 'Заметка', 'Идея', 'Задача', 'Время', 'Работа', RECEIPT_TAG];
 
 let entries = [];          // все записи в памяти (их немного, так проще и быстрее)
 let draftVoice = false;    // в текущем тексте есть надиктованное → источник 'voice'
@@ -49,6 +51,10 @@ let lists = { ...DEFAULT_LISTS, loadedAt: null };   // счета и стать�
 let amount = '';           // набранная сумма как строка: «800», «12500,5»
 let account = null;        // выбранный счёт
 let cat = null;            // выбранная статья или null
+const captureForm = new CaptureForm(() => { saveDraftSoon(); updateSaveButton(); });
+captureForm.onCategory = name => { cat=name; renderFin(); saveDraftSoon(); };
+captureForm.onMode = () => { cat=null; $('catSearch').value=''; renderFin(); };
+
 
 const ICON_VOICE = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" class="fill"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>';
 const ICON_TEXT = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg>';
@@ -87,11 +93,11 @@ function updateStatus() {
 
 /** Выбрать метку (null — без метки). Уход с «Финансов» стирает набранную сумму и статью. */
 function setTag(tag) {
-  selectedTag = tag && TAGS.includes(tag) ? tag : null;
-  for (const b of ui.tags.querySelectorAll('.tag')) {
-    b.setAttribute('aria-pressed', String(b.dataset.tag === selectedTag));
-  }
-  if (selectedTag !== FIN_TAG && (amount || cat)) { amount = ''; cat = null; renderFin(); }
+  if(tag===FIN_TAG)tag=null;
+  if(tag==='Идеи')tag='Идея';if(tag==='Мысли')tag='Заметка';
+  selectedTag=tag&&TAGS.includes(tag)?tag:null;
+  for(const b of ui.tags.querySelectorAll('.tag'))b.setAttribute('aria-pressed',String((b.dataset.tag||null)===selectedTag));
+  captureForm.setTag(selectedTag);renderFin();
 }
 
 // ---------------- Расход кнопками ----------------
@@ -103,7 +109,9 @@ function renderFin() {
   const accs = lists.accounts.slice(0, MAX_ACCOUNTS);
   if (!accs.includes(account)) account = accs[0] || null;
   fillButtons(ui.accounts, accs, account);
-  fillButtons(ui.cats, lists.cats.slice(0, MAX_CATS), cat);
+  captureForm.lists=lists;
+  fillButtons(ui.cats, captureForm.articles().slice(0,10), cat);
+  if(document.activeElement!==$('catSearch'))$('catSearch').value=cat||'';
   updateSaveButton();
 }
 
@@ -125,24 +133,37 @@ function hasAmount() {
 
 function pressKey(key) {
   amount = typeAmount(amount, key);
-  if (amount && selectedTag !== FIN_TAG) setTag(FIN_TAG);
   renderFin();
   saveDraftSoon();
 }
 
 /** Загрузить счета и статьи из txt, выгруженного модулем Финансов. */
 async function loadLists(file) {
-  const parsed = parseLists(await file.text());
+  const text=await file.text();
+  if(text.trim().startsWith('{')){
+    const data=JSON.parse(text);
+    if(data.app==='zahvat-receipt'&&data.v===1&&Array.isArray(data.records)){
+      const byId=new Map(data.records.filter(r=>r&&typeof r.id==='string').map(r=>[r.id,r]));
+      const changed=entries.map(e=>{const r=byId.get(e.id);if(!r||!['received','waiting'].includes(r.status)||!e.exportedAt)return e;
+        if(r.revision!==e.updatedAt)return e;
+        return {...e,delivery:r.status,deliveryError:r.error||''};});
+      await db.putEntries(changed);entries=changed;render();showToast('Результаты приёма обновлены.');return;
+    }
+    if(data.app!=='zahvat-catalog'||data.v!==1||!Array.isArray(data.accounts)||!Array.isArray(data.articles))throw new Error('Неизвестный файл справочников.');
+    const listKeys=['accounts','articles','clients','projects','folders','activities','workClients'];
+    for(const k of listKeys)if(data[k]!==undefined&&(!Array.isArray(data[k])||data[k].some(r=>!r||typeof r.name!=='string'||!r.name.trim())))throw new Error('Повреждён справочник: '+k);
+    if(data.articles.some(r=>!['expense','income'].includes(r.mode)))throw new Error('Неверный вид статьи.');
+    captureForm.readFields();captureForm.catalog=data;
+    await db.setSetting('captureCatalog',data);
+    lists={accounts:data.accounts.map(r=>r.name),cats:data.articles.filter(a=>a.mode==='expense').map(a=>a.name),loadedAt:Date.now()};
+    await db.setSetting('finLists',lists);cat=null;captureForm.render();renderFin();saveDraftSoon();showToast('Справочники Органайзера загружены.');return;
+  }
+  const parsed = parseLists(text);
   if (parsed.error) { showToast(parsed.error); return; }
   lists = { accounts: parsed.accounts, cats: parsed.cats, loadedAt: Date.now() };
   await db.setSetting('finLists', lists);
   if (cat && !lists.cats.includes(cat)) cat = null;
-  renderFin();
-  const more = [];
-  if (lists.accounts.length > MAX_ACCOUNTS) more.push(`счетов — первые ${MAX_ACCOUNTS}`);
-  if (lists.cats.length > MAX_CATS) more.push(`статей — первые ${MAX_CATS}`);
-  showToast(`Загружено: счетов ${lists.accounts.length}, статей ${lists.cats.length}` +
-    (more.length ? `. На экране ${more.join(', ')}.` : '.'), null, null, 5000);
+  captureForm.lists=lists;captureForm.render();renderFin();showToast(`Загружено: счетов ${lists.accounts.length}, статей ${lists.cats.length}`);
 }
 
 // ---------------- Черновик ----------------
@@ -156,7 +177,7 @@ function saveDraftNow() {
   clearTimeout(draftTimer);
   try {
     if (ui.text.value || selectedTag || amount || cat) {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ text: ui.text.value, voice: draftVoice, tag: selectedTag, amount, cat }));
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ text: ui.text.value, voice: draftVoice, tag: selectedTag, amount, cat, capture: captureForm.snapshot(), editing: structuredEditing?.id||null }));
     }
     else localStorage.removeItem(DRAFT_KEY);
   } catch { /* хранилище недоступно — не страшно, база записей отдельно */ }
@@ -166,8 +187,9 @@ function restoreDraft() {
     account = localStorage.getItem(ACCOUNT_KEY);
     const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
     if (d) {
+      pendingStructuredId=d.editing||null;
       ui.text.value = d.text || ''; draftVoice = !!d.voice; setTag(d.tag);
-      if (d.tag === FIN_TAG) { amount = typeof d.amount === 'string' ? d.amount : ''; cat = d.cat || null; }
+      amount=typeof d.amount==='string'?d.amount:'';cat=d.cat||null;captureForm.restore(d.capture);if(d.capture){selectedTag=d.capture.tag||null;for(const b of ui.tags.querySelectorAll('.tag'))b.setAttribute('aria-pressed',String((b.dataset.tag||null)===selectedTag));}
     }
   } catch { /* битый черновик — пропускаем */ }
 }
@@ -189,41 +211,34 @@ function newId() {
 
 /** Всё, что набрано сейчас, — чтобы вернуть после ошибки записи или «Стереть». */
 function snapshot() {
-  return { text: ui.text.value, voice: draftVoice, tag: selectedTag, amount, cat };
+  return { text: ui.text.value, voice: draftVoice, tag: selectedTag, amount, cat, capture: captureForm.snapshot(), editingRecord: structuredEditing };
 }
 function restore(s) {
   ui.text.value = s.text;
   draftVoice = s.voice;
   setTag(s.tag);
-  amount = s.amount; cat = s.cat;   // после setTag: он стирает сумму, пока метка не «Финансы»
+  structuredEditing=s.editingRecord||null;captureForm.restore(s.capture);amount = s.amount; cat = s.cat;   // после setTag: он стирает сумму, пока метка не «Финансы»
   renderFin();
   saveDraftNow();
 }
 function resetInput() {
-  ui.text.value = '';
-  draftVoice = false;
-  setTag(null);   // заодно стирает сумму и статью
-  renderFin();
+  ui.text.value='';draftVoice=false;amount='';cat=null;captureForm.reset();renderFin();
 }
 
+let structuredEditing=null,pendingStructuredId=null;
 async function saveEntry() {
   if (dictation.recording || ui.interim.textContent) {
     // Dictation сам объединяет окончательный и предварительный текст без повторов.
     dictation.finish();
   }
-  const raw = ui.text.value.trim();
-  const isFin = selectedTag === FIN_TAG && hasAmount();
-  if (!raw && !isFin) return;
-  const before = snapshot();
-  // Расход: «Финансы: мир 800 продукты, Пятёрочка»; без метки — «Заметка: …»
-  const text = isFin
-    ? applyTag(financeText({ account, amount, cat, note: raw }), FIN_TAG)
-    : applyTag(raw, selectedTag || NOTE_TAG);
-  const now = Date.now();
-  const entry = {
-    id: newId(), ts: now, createdAt: now, updatedAt: now,
-    text, source: draftVoice ? 'voice' : 'text', exportedAt: null,
-  };
+  const raw=ui.text.value.trim();
+  const before=snapshot();let payload;
+  try {payload=captureForm.payload(raw,amount,account,cat);captureForm.error('');}
+  catch(error){captureForm.error(error.message);return;}
+  const text=recordText(payload),now=Date.now();
+  const original=structuredEditing;
+  const entry={id:original?.id||newId(),ts:original?.ts||now,createdAt:original?.createdAt||now,updatedAt:now,text,payload,source:draftVoice?'voice':'text',exportedAt:null};
+  structuredEditing=null;
   // Поле сбрасываем сразу: если начать следующую запись, пока идёт запись в базу, она не пропадёт
   resetInput();
   try {
@@ -235,7 +250,7 @@ async function saveEntry() {
     return;
   }
   saveDraftNow();   // черновик стираем только после удачной записи
-  entries.push(entry);
+  structuredEditing=null;entries=entries.filter(e=>e.id!==entry.id);entries.push(entry);
   render();
   showToast('Сохранено');
 }
@@ -244,7 +259,7 @@ async function saveEntry() {
 function clearInput() {
   dictation.cancel();
   ui.interim.textContent = '';
-  const before = snapshot();
+  const before = snapshot();structuredEditing=null;
   if (!before.text && !before.tag && !before.amount && !before.cat) return;
   resetInput();
   saveDraftNow();
@@ -292,7 +307,7 @@ function renderRecent() {
     const time = document.createElement('span');
     time.className = 'time';
     time.textContent = formatTime(e.ts);
-    b.append(time, entryText(e));
+    const preview=document.createElement('span');preview.className='txt';preview.append(entryText(e));b.append(time,preview);
     li.append(b);
     ui.recent.append(li);
   }
@@ -319,6 +334,7 @@ function closeAll() {
 function renderFeed() {
   const q = normalizeForSearch(ui.search.value.trim());
   const list = (q ? entries.filter(e => normalizeForSearch(e.text).includes(q)) : entries.slice())
+    .filter(e=>(!$('filterSection').value||recordKind(e)===$('filterSection').value)&&(!$('filterState').value||(e.delivery|| (e.exportedAt?'sent':'new'))===$('filterState').value))
     .sort((a, b) => b.ts - a.ts);
 
   ui.feedTitle.textContent = q ? `Найдено: ${list.length}` : `Все записи · ${list.length}`;
@@ -341,8 +357,9 @@ function entryItem(e) {
   b.dataset.id = e.id;
   b.setAttribute('aria-label', `${formatLocal(e.ts)}, ${e.source === 'voice' ? 'голосом' : 'текстом'}${e.exportedAt ? ', выгружено' : ''}: ${e.text}. Нажмите, чтобы изменить`);
   const time = document.createElement('span');
-  time.className = 'time';
-  time.textContent = formatShort(e.ts);
+  time.className='time';
+  time.textContent=formatShort(e.ts)+' · '+({received:'Принято на ПК',waiting:'Требует внимания'}[e.delivery]||(e.exportedAt?'Выгружено':'Новое'));
+  if(e.deliveryError)time.title=e.deliveryError;
   const src = document.createElement('span');
   src.className = 'src';
   src.innerHTML = e.source === 'voice' ? ICON_VOICE : ICON_TEXT;
@@ -359,6 +376,7 @@ function editorItem(e) {
   li.className = 'editor';
   const ta = document.createElement('textarea');
   ta.value = e.text;
+  if(e.payload)ta.readOnly=true;
   ta.setAttribute('aria-label', 'Изменить запись');
   const meta = document.createElement('p');
   meta.className = 'meta';
@@ -371,6 +389,8 @@ function editorItem(e) {
     button('Удалить', 'danger', () => removeEntry(e)),
     button('Отмена', '', () => { editingId = null; render(); }),
   );
+  if(e.payload)row.prepend(button('Изменить поля','',()=>editStructured(e)));
+  if(recordKind(e)==='idea')row.append(button('В задачу','',()=>{if(ui.text.value.trim()||amount){showToast('Сначала сохраните текущий черновик.');return;}closeAll();setTag('Задача');ui.text.value=e.payload?.text||e.text.replace(/^Иде[яи]:\s*/, '');saveDraftSoon();updateSaveButton();}));
   li.append(ta, meta, row);
   queueMicrotask(() => { ta.focus(); li.scrollIntoView({ block: 'nearest' }); });
   return li;
@@ -385,9 +405,21 @@ function button(label, cls, onClick) {
   return b;
 }
 
+function editStructured(e){
+  if(ui.text.value.trim()||amount){showToast('Сначала сохраните текущий черновик.');return;}
+  if(e.exportedAt){showToast('Запись уже выгружена. Исправьте её в Органайзере, чтобы не создавать расхождения.');return;}
+  const p=e.payload;closeAll();structuredEditing=e;
+  setTag({finance:null,task:'Задача',note:'Заметка',idea:'Идея',time:'Время',work:'Работа'}[p.kind]);
+  ui.text.value=p.text||'';draftVoice=e.source==='voice';
+  const values={...p,project:p.project?.id?String(p.project.id):'',client:p.client?.id?String(p.client.id):'',folder:p.folder?.id?String(p.folder.id):'',activity:p.activity?.id?String(p.activity.id):'',from:p.account,to:p.to_account,workAmount:p.kind==='work'?String(p.amount/100).replace('.',','):''};
+  captureForm.restore({tag:selectedTag,mode:p.mode||'expense',date:p.day?new Date(p.day+'T12:00:00').toLocaleDateString('ru-RU'):undefined,values});
+  amount=p.kind==='finance'?String(p.amount/100).replace('.',','):'';account=p.account||account;cat=p.article||null;renderFin();saveDraftSoon();updateSaveButton();
+}
+
 async function updateEntry(e, newText) {
   const text = newText.trim();
   if (!text) { showToast('Текст пустой. Чтобы убрать запись, нажмите «Удалить».'); return; }
+  if(e.payload&&text!==e.text){showToast('Для записи с полями используйте «Изменить поля».');return;}
   const changed = { ...e, text, updatedAt: Date.now(), exportedAt: text === e.text ? e.exportedAt : null };
   await db.putEntry(changed);
   entries = entries.map(x => x.id === e.id ? changed : x);
@@ -668,7 +700,7 @@ async function saveReceipt(raw) {
     showToast('Не удалось сохранить чек: ' + (err && err.message || err));
     return;
   }
-  entries.push(entry);
+  structuredEditing=null;entries=entries.filter(e=>e.id!==entry.id);entries.push(entry);
   render();
   showToast(`Чек сохранён: ${receiptLabel(raw)}`);
 }
@@ -697,7 +729,7 @@ async function exportCsv(mode, how, from, to) {
     return;
   }
   const csv = toCsv(list);   // колонка «выгружено» берёт прежнюю дату — считаем до отметки
-  const name = `zahvat_${fileStamp()}.csv`;
+  const name = `zahvat2_${fileStamp()}.csv`;
   let done = false;   // 'share' | 'download' | 'copy' — чем на самом деле выгрузили
   if (how === 'share') done = await shareFile(csv, name, 'text/csv');
   else if (how === 'download') done = downloadFile(csv, name, 'text/csv;charset=utf-8') && 'download';
@@ -813,6 +845,7 @@ async function restoreJson(file) {
   }
   const fl = await db.getSetting('finLists');
   if (fl && fl.accounts && fl.cats) { lists = fl; renderFin(); }
+  const catalog=await db.getSetting('captureCatalog');if(catalog?.app==='zahvat-catalog')captureForm.catalog=catalog;captureForm.lists=lists;captureForm.render();renderFin();
   entries = await db.getAllEntries();
   render();
   showToast(`Восстановлено: добавлено ${added}, обновлено ${updated}, без изменений ${skipped}.`);
@@ -871,6 +904,8 @@ async function onMenuAction(act) {
 // ---------------- Запуск ----------------
 
 function wire() {
+  $('showAll').onclick=()=>openAll();
+  for(const id of ['filterSection','filterState'])$(id).onchange=()=>{editingId=null;renderFeed();};
   ui.text.addEventListener('input', () => {
     if (dictation.recording) dictation.resetSession();   // правка руками во время диктовки
     saveDraftSoon();
@@ -885,7 +920,7 @@ function wire() {
   ui.tags.addEventListener('click', (ev) => {
     const b = ev.target.closest('.tag');
     if (!b) return;
-    setTag(b.dataset.tag === selectedTag ? null : b.dataset.tag);
+    setTag(b.dataset.tag||null);
     saveDraftSoon();
   });
   // «Сохранить» и «Стереть» не забирают фокус у поля — клавиатура не прыгает
@@ -910,7 +945,7 @@ function wire() {
     const b = ev.target.closest('button[data-name]');
     if (!b) return;
     cat = cat === b.dataset.name ? null : b.dataset.name;
-    if (cat && selectedTag !== FIN_TAG) setTag(FIN_TAG);
+    $('catSearch').value=cat||'';captureForm.closeOptions();
     renderFin();
     saveDraftSoon();
   });
@@ -998,17 +1033,20 @@ function wire() {
 async function init() {
   wire();
   restoreDraft();
-  renderFin();
+  captureForm.lists=lists;captureForm.render();renderFin();
   updateStatus();
   // Просим браузер не стирать базу при нехватке места
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   try {
     const saved = await db.getSetting('finLists');
     if (saved && saved.accounts && saved.cats) lists = saved;
+    const catalog=await db.getSetting('captureCatalog');if(catalog&&catalog.app==='zahvat-catalog'&&catalog.v===1)captureForm.catalog=catalog;
+    captureForm.lists=lists;captureForm.render();
   } catch { /* остаются примеры */ }
   renderFin();
   try {
     entries = await db.getAllEntries();
+    if(pendingStructuredId)structuredEditing=entries.find(e=>e.id===pendingStructuredId&&!e.exportedAt)||null;
   } catch (err) {
     showToast('База недоступна: ' + (err && err.message || err) + '. Запишите текст и сделайте резервную копию позже.');
   }
@@ -1017,7 +1055,7 @@ async function init() {
     // Пришла новая версия — перезагрузиться сразу, если ничего не набрано (иначе подхватится при следующем открытии)
     const hadOld = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (hadOld && !ui.text.value.trim() && !document.querySelector('dialog[open]')) location.reload();
+      if (hadOld && !ui.text.value.trim() && !amount && !ui.interim.textContent.trim() && !dictation.recording && !Object.values(captureForm.values).some(Boolean) && !document.querySelector('dialog[open]')) location.reload();
     });
     navigator.serviceWorker.register('sw.js').catch(() => { /* без офлайна, но работает */ });
   }

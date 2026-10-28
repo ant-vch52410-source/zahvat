@@ -2,14 +2,14 @@
 // Запуск: node tests/browser.mjs. Сервер доступен только на 127.0.0.1 и отдаёт только файлы приложения.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join, sep } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 const root = fileURLToPath(new URL('../', import.meta.url));
-const allowed = new Set(['index.html', 'app.js', 'core.js', 'speech.js', 'db.js', 'style.css', 'sw.js',
+const allowed = new Set(['index.html', 'app.js', 'capture.js', 'core.js', 'speech.js', 'db.js', 'style.css', 'sw.js',
   'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'lib/jsQR.js',
   'tests/tests.html', 'tests/tests.js']);
 const types = { js: 'text/javascript', html: 'text/html', css: 'text/css', svg: 'image/svg+xml',
@@ -102,9 +102,55 @@ try {
   await evaluate(`window.__speechInstances.at(-1).result([['старый ответ', true]]); window.__speechInstances.at(-1).end()`);
   assert.equal(await evaluate('document.querySelector("#text").value'), '');
   await evaluate(`document.querySelector('#btnMenu').click()`);
-  await until(() => evaluate('document.body.innerText.includes("Версия 8")'), 'загрузка меню');
-  assert.ok((await evaluate('caches.keys()')).includes('zahvat-v8'));
-  console.log('Edge: HTTP 200, ввод 90 слов, 100 повторных событий, пауза, сохранение в IndexedDB и версия 8 — OK');
+  await until(() => evaluate('document.body.innerText.includes("Версия 9")'), 'загрузка меню');
+  assert.ok((await evaluate('caches.keys()')).includes('zahvat-v9'));
+
+  await evaluate(`document.querySelector('#btnMenu').click()`);
+  assert.equal(await evaluate(`document.querySelectorAll('#tags button').length`),6);
+  assert.deepEqual(await evaluate(`(()=>{const ids=[...document.querySelectorAll('[id]')].map(n=>n.id);return ids.filter((id,i)=>ids.indexOf(id)!==i)})()`),[]);
+  const catalog={app:'zahvat-catalog',v:1,accounts:[{name:'Счёт тест',currency:'RUB'},{name:'Карта тест',currency:'RUB'}],articles:[{name:'Продукты тест',mode:'expense'},{name:'Зарплата тест',mode:'income'}],clients:[{id:101,name:'Клиент тест'}],workClients:[{id:101,name:'Клиент тест'}],projects:[{id:202,name:'Проект тест',client_id:101}],folders:[{id:303,name:'Папка тест'}],activities:[{id:404,name:'Работа тест'}]};
+  await evaluate(`(()=>{const input=document.querySelector('#fileLists'),dt=new DataTransfer();dt.items.add(new File([${JSON.stringify(JSON.stringify(catalog))}],'catalog.json',{type:'application/json'}));input.files=dt.files;input.dispatchEvent(new Event('change'));})()`);
+  await until(()=>evaluate(`document.querySelector('#accounts').textContent.includes('Счёт тест')`),'справочники');
+  await evaluate(`document.querySelector('#operationDate').value='31.12.2026';document.querySelector('#operationDate').dispatchEvent(new Event('input'));document.querySelector('#opNext').click()`);
+  assert.equal(await evaluate(`document.querySelector('#operationDate').value`),'01.01.2027');
+  await evaluate(`document.querySelector('#captureMode [data-mode="income"]').click();document.querySelector('#cats button').click();document.querySelector('#pad [data-key="5"]').click();document.querySelector('#btnSave').click()`);
+  let rows=await until(()=>evaluate(`import('./db.js').then(db=>db.getAllEntries()).then(rows=>rows.length>=2&&rows)`),'доход');
+  let income=rows.find(e=>e.payload?.kind==='finance');
+  assert.equal(income.payload.mode,'income');assert.equal(income.payload.amount,500);assert.equal(income.payload.day,'2027-01-01');
+  assert.equal(income.payload.article,'Зарплата тест');
+  await evaluate(`document.querySelector('#captureMode [data-mode="transfer"]').click();document.querySelector('#to').value='Карта тест';document.querySelector('#to').dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('#pad [data-key="2"]').click();document.querySelector('#btnSave').click()`);
+  rows=await until(()=>evaluate(`import('./db.js').then(db=>db.getAllEntries()).then(rows=>rows.length>=3&&rows)`),'перевод');
+  assert.equal(rows.find(e=>e.payload?.mode==='transfer').payload.to_account,'Карта тест');
+  for(const [tag,kind] of [['Задача','task'],['Заметка','note'],['Идея','idea'],['Время','time'],['Работа','work']]){
+    await evaluate(`document.querySelector('#tags [data-tag="${tag}"]').click();document.querySelector('#text').value='Тест ${tag}';document.querySelector('#text').dispatchEvent(new Event('input'))`);
+    if(tag==='Задача')await evaluate(`document.querySelector('#at').value='15:30';document.querySelector('#priority').value='high';document.querySelector('#project').value='202'`);
+    if(tag==='Заметка')await evaluate(`document.querySelector('#folder').value='303';document.querySelector('#important').checked=true`);
+    if(tag==='Идея')await evaluate(`document.querySelector('#project').value='202';document.querySelector('#tags').dispatchEvent(new Event('change'))`);
+    if(tag==='Время')await evaluate(`document.querySelector('#activity').value='404';document.querySelector('#day').value='2026-01-12';document.querySelector('#start').value='10:00';document.querySelector('#end').value='10:30'`);
+    if(tag==='Работа')await evaluate(`document.querySelector('#client').value='101';document.querySelector('#client').dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('#project').value='202';document.querySelector('#workAmount').value='1200,50'`);
+    await evaluate(`document.querySelector('#btnSave').click()`);
+    rows=await until(()=>evaluate(`import('./db.js').then(db=>db.getAllEntries()).then(rows=>rows.some(e=>e.payload?.kind==='${kind}'&&e.payload.text==='Тест ${tag}')&&rows)`),'сохранение '+tag);
+  }
+  assert.equal(rows.find(e=>e.payload?.kind==='work').payload.amount,120050);
+  assert.equal(rows.find(e=>e.payload?.kind==='task').payload.project.id,202);
+  assert.equal(rows.find(e=>e.payload?.kind==='note'&&e.payload.text==='Тест Заметка').payload.folder.id,303);
+  const beforeBackup=await evaluate(`import('./db.js').then(db=>db.getAllEntries())`);
+  const roundtrip=await evaluate(`Promise.all([import('./core.js'),import('./db.js')]).then(([c,db])=>db.getAllEntries().then(rows=>({normalized:rows.map(c.normalizeEntry),csv:c.parseCsv(c.toCsv(rows))})))`);
+  assert.deepEqual(roundtrip.normalized.map(e=>e.payload),beforeBackup.map(e=>e.payload));
+  assert.equal(roundtrip.csv[0].at(-1),'данные');
+  const financeCsv=roundtrip.csv.slice(1).find(r=>r[0]===income.id);
+  assert.equal(JSON.parse(financeCsv.at(-1)).amount,500);
+  await call('Emulation.setDeviceMetricsOverride',{width:360,height:762,deviceScaleFactor:1,mobile:true});
+  for(const tag of ['', 'Задача','Заметка','Идея','Время','Работа']){
+    await evaluate(`document.querySelector('#tags [data-tag="${tag}"]').click()`);
+    const sizes=await evaluate(`(()=>{const m=document.querySelector('#btnMic').getBoundingClientRect();return {over:document.documentElement.scrollWidth>innerWidth,right:innerWidth-m.right,bottom:innerHeight-m.bottom}})()`);
+    assert.equal(sizes.over,false);assert.equal(Math.round(sizes.right),16);assert.equal(Math.round(sizes.bottom),16);
+    await mkdir(join(root,'tests','screenshots'),{recursive:true});const shot=await call('Page.captureScreenshot',{format:'png'});await writeFile(join(root,'tests','screenshots',(tag||'Захват')+'.png'),Buffer.from(shot.data,'base64'));
+  }
+  await evaluate(`document.querySelector('#showAll').click()`);
+  const allShot=await call('Page.captureScreenshot',{format:'png'});await writeFile(join(root,'tests','screenshots','Все записи.png'),Buffer.from(allShot.data,'base64'));
+  console.log('Все 6 разделов: сохранение полей в IndexedDB, дата, перевод, CSV/копия, уникальные id, микрофон и ширина 360 — OK');
+  console.log('Edge: HTTP 200, ввод 90 слов, 100 повторных событий, пауза, сохранение в IndexedDB и версия 9 — OK');
 } finally {
   if (socket?.readyState === WebSocket.OPEN) {
     await call('Browser.close').catch(() => {});

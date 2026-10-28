@@ -16,9 +16,20 @@
   <script type="module" src="app.js"></script>
 </head>
 <body>
-  <!-- Главный экран (задача 3): поле, микрофон, метки-иконки, расход кнопками, последние записи за сегодня -->
-  <div id="homeView" class="screen home">
-    <header class="bar">
+<svg style="display:none" aria-hidden="true"><defs>
+<symbol id="capture" viewBox="0 0 24 24"><path d="M4 5h16v15H4zM8 2v6M16 2v6M4 11h16M8 15h3M8 18h7"/></symbol>
+<symbol id="finance" viewBox="0 0 24 24"><path d="M4 8h16v12H4zM4 8l3-4h10v4M16 14h1"/></symbol>
+<symbol id="task" viewBox="0 0 24 24"><path d="M14 4h6v16H4V4h4M8 3h6v4H8zM8 13l3 3 5-6"/></symbol>
+<symbol id="note" viewBox="0 0 24 24"><path d="M4 4h16v13H9l-5 4zM8 8h8M8 12h5"/></symbol>
+<symbol id="idea" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M8 13a6 6 0 1 1 8 0l-1 3H9z"/></symbol>
+<symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></symbol>
+<symbol id="work" viewBox="0 0 24 24"><path d="M3 7h18v14H3zM8 7V3h8v4M3 12l9 3 9-3M12 12v4"/></symbol>
+<symbol id="mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M6 10v2a6 6 0 0 0 12 0v-2M12 18v4M8 22h8"/></symbol>
+<symbol id="qr" viewBox="0 0 24 24"><path d="M3 3h6v6H3zM15 3h6v6h-6zM3 15h6v6H3zM15 15h2v2h-2zM20 15v3M15 21h3v-2h3v2"/></symbol>
+<symbol id="icon-menu" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></symbol>
+<symbol id="back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+</defs></svg>
+<div id="homeView" class="screen home"><header class="bar">
       <h1>Захват</h1>
       <!-- Чек (задача 4): камера читает QR-код кассового чека, запись «Чек: t=…&s=…» уходит на ПК вместе с остальными -->
       <button id="btnScan" class="icon" type="button" aria-label="Чек: считать QR-код">
@@ -31,7 +42,7 @@
         <div id="menu" class="menu" role="menu" aria-label="Меню" hidden>
           <p id="menuInfo" class="menu-info"></p>
           <button type="button" role="menuitem" data-act="all">Все записи</button>
-          <button type="button" role="menuitem" data-act="lists">Загрузить счета и статьи</button>
+          <button type="button" role="menuitem" data-act="lists">Загрузить справочники / квитанцию</button>
           <p id="listsInfo" class="menu-note"></p>
           <hr>
           <button type="button" role="menuitem" data-act="share">Поделиться CSV</button>
@@ -45,64 +56,14 @@
           <p class="menu-note">Данные хранятся только на этом телефоне.</p>
         </div>
       </div>
-    </header>
-
-    <main>
-      <section class="compose" aria-label="Новая запись">
-        <textarea id="text" rows="2" enterkeyhint="enter" autocapitalize="sentences" aria-label="Текст записи или комментарий к расходу"></textarea>
-        <p id="interim" class="interim" aria-live="polite"></p>
-        <div class="controls">
-          <button id="btnMic" class="mic" type="button" aria-label="Начать диктовку" aria-pressed="false">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" class="fill"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/></svg>
-          </button>
-          <div class="side">
-            <!-- Метки-иконки: выбранная ставится перед текстом («Финансы: …»); без метки запись станет «Заметка: …» -->
-            <div id="tags" class="tags" role="group" aria-label="Метка записи">
-              <button type="button" class="tag" data-tag="Финансы" aria-label="Финансы" aria-pressed="false">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h15a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V8Zm0 0 3-4h10v4M16 14h.01"/></svg>
-              </button>
-              <button type="button" class="tag" data-tag="Идеи" aria-label="Идеи" aria-pressed="false">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9V16h7v-2.1A6 6 0 0 0 12 3Z"/></svg>
-              </button>
-              <button type="button" class="tag" data-tag="Мысли" aria-label="Мысли" aria-pressed="false">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 1 3.4 6.5L4 20l1.4-3.4A8 8 0 0 1 4 12Z"/></svg>
-              </button>
-            </div>
-            <div class="actions">
-              <button id="btnClear" class="clear" type="button">Стереть</button>
-              <button id="btnSave" class="save" type="button" disabled>Сохранить</button>
-            </div>
-          </div>
-        </div>
-        <p id="status" class="status" role="status"></p>
-      </section>
-
-      <hr class="dash">
-
-      <!-- Расход кнопками: сумма со своей клавиатуры (системная не выезжает), счёт, статья -->
-      <section class="fin" aria-label="Расход">
-        <div class="fin-left">
-          <output id="amount" class="amount" aria-label="Сумма">0</output>
-          <div id="accounts" class="accounts" role="group" aria-label="Счёт"></div>
-          <div id="pad" class="pad" role="group" aria-label="Цифры суммы">
-            <button type="button" data-key="1">1</button><button type="button" data-key="2">2</button><button type="button" data-key="3">3</button>
-            <button type="button" data-key="4">4</button><button type="button" data-key="5">5</button><button type="button" data-key="6">6</button>
-            <button type="button" data-key="7">7</button><button type="button" data-key="8">8</button><button type="button" data-key="9">9</button>
-            <button type="button" data-key=",">,</button><button type="button" data-key="0">0</button>
-            <button type="button" data-key="⌫" aria-label="Стереть цифру">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h11a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H9l-6-7 6-7ZM12 9l6 6M18 9l-6 6"/></svg>
-            </button>
-          </div>
-        </div>
-        <div id="cats" class="cats" role="group" aria-label="Статья расхода"></div>
-      </section>
-
-      <hr class="dash">
-
-      <ul id="recent" class="recent" aria-label="Последние записи за сегодня"></ul>
-    </main>
-  </div>
-
+    </header><main>
+<section class="compose"><textarea id="text" rows="2" aria-label="Текст записи или комментарий к расходу" placeholder="Записать мысль или комментарий…"></textarea><p id="interim" class="interim" aria-live="polite"></p><div class="actions"><button id="btnClear" type="button">Стереть</button><button id="btnSave" type="button" class="save primary" disabled>Сохранить</button></div><p id="status" class="status" role="status"></p></section>
+<nav id="tags" class="tags sectionnav" aria-label="Раздел записи"><button type="button" class="tag" data-tag="" aria-label="Захват" title="Захват" aria-pressed="false"><svg aria-hidden="true"><use href="#finance"/></svg></button><button type="button" class="tag" data-tag="Задача" aria-label="Задачи" title="Задачи" aria-pressed="false"><svg aria-hidden="true"><use href="#task"/></svg></button><button type="button" class="tag" data-tag="Заметка" aria-label="Заметки" title="Заметки" aria-pressed="false"><svg aria-hidden="true"><use href="#note"/></svg></button><button type="button" class="tag" data-tag="Идея" aria-label="Идеи" title="Идеи" aria-pressed="false"><svg aria-hidden="true"><use href="#idea"/></svg></button><button type="button" class="tag" data-tag="Время" aria-label="Время" title="Время" aria-pressed="false"><svg aria-hidden="true"><use href="#clock"/></svg></button><button type="button" class="tag" data-tag="Работа" aria-label="Работы" title="Работы" aria-pressed="false"><svg aria-hidden="true"><use href="#work"/></svg></button></nav>
+<section class="capture-panel"><div class="section-heading"><h2 id="captureTitle">Захват</h2><small id="captureHint">Без суммы — заметка</small></div><div id="captureMode" class="segment mode"><button type="button" data-mode="expense">Расход</button><button type="button" data-mode="income">Доход</button><button type="button" data-mode="transfer">Перевод</button></div>
+<div class="fin-grid" id="captureFin"><div><output id="amount" class="amount sum" aria-label="Сумма">0</output><div id="accounts" class="accounts" role="group" aria-label="Счёт"></div><div id="pad" class="pad" role="group" aria-label="Цифры суммы"><button type="button" data-key="1">1</button><button type="button" data-key="2">2</button><button type="button" data-key="3">3</button><button type="button" data-key="4">4</button><button type="button" data-key="5">5</button><button type="button" data-key="6">6</button><button type="button" data-key="7">7</button><button type="button" data-key="8">8</button><button type="button" data-key="9">9</button><button type="button" data-key=",">,</button><button type="button" data-key="0">0</button><button type="button" data-key="⌫" aria-label="Стереть цифру">⌫</button></div></div><div id="categoryArea"><div id="cats" class="cats" role="group" aria-label="Статья"></div><div class="picker"><input id="catSearch" type="text" role="combobox" aria-label="Найти статью" aria-autocomplete="list" aria-controls="catOptions" aria-expanded="false" placeholder="Найти статью…" autocomplete="off"><span class="chevron">⌄</span><div id="catOptions" class="options" role="listbox" hidden></div></div><div id="opDateBox" class="op-date"><button id="opPrev" type="button" aria-label="Предыдущий день">‹</button><input id="operationDate" type="text" inputmode="numeric" aria-label="Дата операции, ДД.ММ.ГГГГ" maxlength="10"><button id="opNext" type="button" aria-label="Следующий день">›</button></div></div></div>
+<div id="captureFields" class="fields" hidden></div><p id="captureError" class="error" role="alert" hidden></p></section>
+<section class="recent-panel"><div class="recent-head"><h2>Сегодня</h2><button id="showAll" class="link" type="button">Все записи →</button></div><ul id="recent" class="recent" aria-label="Последние записи за сегодня"></ul></section></main></div>
+<button id="btnMic" class="mic" type="button" aria-label="Начать диктовку" aria-pressed="false"><svg aria-hidden="true"><use href="#mic"/></svg></button>
   <!-- Все записи (из меню): поиск, правка, удаление; «Назад» телефона возвращает на главный -->
   <div id="allView" class="screen" hidden>
     <header class="bar">
@@ -115,7 +76,7 @@
       <section class="search">
         <input id="search" type="search" placeholder="Поиск по всем записям" aria-label="Поиск по всем записям" autocomplete="off">
       </section>
-      <ul id="feed" class="feed"></ul>
+      <div class="allfilters"><select id="filterSection" aria-label="Фильтр по разделу"><option value="">Все разделы</option><option value="finance">Захват</option><option value="task">Задачи</option><option value="note">Заметки</option><option value="idea">Идеи</option><option value="time">Время</option><option value="work">Работы</option><option value="receipt">Чеки</option></select><select id="filterState" aria-label="Фильтр по статусу"><option value="">Все статусы</option><option value="new">Новые</option><option value="sent">Выгружены</option><option value="received">Приняты на ПК</option><option value="waiting">Требуют внимания</option></select></div><ul id="feed" class="feed"></ul>
     </main>
   </div>
 
@@ -165,7 +126,7 @@
   </dialog>
 
   <input id="fileRestore" type="file" accept=".json,application/json" hidden>
-  <input id="fileLists" type="file" accept=".txt,text/plain" hidden>
+  <input id="fileLists" type="file" accept=".txt,.json,text/plain,application/json" hidden>
   <input id="filePhoto" type="file" accept="image/*" capture="environment" hidden>
   <input id="fileGallery" type="file" accept="image/*" hidden>
 </body>

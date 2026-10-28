@@ -1,8 +1,9 @@
+// Шесть разделов и структурированный обмен с Органайзером (задача 7).
 // Чистые функции «Захвата» (задачи 1, 2, 3, 5): CSV, даты, отбор записей, объединение резервных копий, метки, расходы кнопками.
 // Без обращения к странице и базе — поэтому их проверяет tests.html.
 
 /** Колонки CSV — порядок фиксирован, по нему работает разбор на компьютере. */
-export const CSV_COLUMNS = ['id', 'дата_время', 'ts_utc', 'текст', 'источник', 'выгружено'];
+export const CSV_COLUMNS = ['id', 'дата_время', 'ts_utc', 'текст', 'источник', 'выгружено', 'данные'];
 
 const BOM = '﻿';   // метка UTF-8: по ней Excel понимает, что файл в UTF-8 (кириллица не «ломается»)
 const SEP = ';';        // русский Excel по умолчанию делит колонки точкой с запятой
@@ -65,6 +66,7 @@ export function csvRow(e) {
     csvField(e.text, { guard: true }),        // только текст пишет человек — его и защищаем
     csvField(e.source),
     csvField(e.exportedAt ? formatLocal(e.exportedAt) : ''),
+    csvField(e.payload?JSON.stringify({...e.payload,revision:e.updatedAt}):''),
   ].join(SEP);
 }
 
@@ -149,6 +151,8 @@ export function normalizeEntry(e) {
     text: e.text,
     source: e.source === 'voice' ? 'voice' : 'text',
     exportedAt: Number.isFinite(e.exportedAt) ? e.exportedAt : null,
+    ...(e.payload&&typeof e.payload==='object'&&!Array.isArray(e.payload)?{payload:JSON.parse(JSON.stringify(e.payload))}:{}),
+    ...(['received','waiting'].includes(e.delivery)?{delivery:e.delivery,deliveryError:typeof e.deliveryError==='string'?e.deliveryError:''}:{}),
   };
 }
 

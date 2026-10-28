@@ -1,13 +1,15 @@
+// Шесть разделов и структурированный обмен с Органайзером (задача 7).
 // Service worker «Захвата» (задачи 1, 3, 4, 5): держит файлы приложения в кэше, чтобы оно открывалось без сети.
 // Стратегия «сначала кэш»: файлы берутся из кэша, сеть — только если файла там нет.
 // Выпускаете новую версию — увеличьте VERSION, иначе телефон продолжит показывать старую.
 
-const VERSION = 'zahvat-v8';   // та же цифра — APP_VERSION в app.js (видна в меню)
+const VERSION = 'zahvat-v9';   // та же цифра — APP_VERSION в app.js (видна в меню)
 const SHELL = [
   './',
   './index.html',
   './style.css',
   './app.js',
+  './capture.js',
   './core.js',
   './db.js',
   './speech.js',
@@ -29,7 +31,7 @@ self.addEventListener('install', (ev) => {
 self.addEventListener('activate', (ev) => {
   ev.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(k => k.startsWith('zahvat-v') && k !== VERSION).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
