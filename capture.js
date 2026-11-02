@@ -23,9 +23,10 @@ const h = (tag, text, attrs={}) => { const el=document.createElement(tag); if(te
 
 export class CaptureForm {
   constructor(changed) {
-    this.changed=changed; this.tag=''; this.mode='expense'; this.date=new Date().toLocaleDateString('ru-RU');
+    this.changed=changed; this.tag=''; this.mode='expense'; this.planned=false; this.previousMode='expense'; this.date=new Date().toLocaleDateString('ru-RU');
     this.values={}; this.catalog={}; this.lists={accounts:[],cats:[]};
-    $('captureMode').onclick=e=>{const b=e.target.closest('[data-mode]');if(!b)return;this.readFields();this.mode=b.dataset.mode;this.onMode?.();this.render();this.changed();};
+    $('captureMode').onclick=e=>{const b=e.target.closest('[data-mode]');if(!b)return;this.readFields();if(this.planned)return;this.mode=b.dataset.mode;this.onMode?.();this.render();this.changed();};
+    $('planToggle').onclick=()=>{this.readFields();this.planned=!this.planned;if(this.planned){this.previousMode=this.mode;this.mode='expense';}else this.mode=this.previousMode;this.error('');this.onMode?.();this.render();this.changed();};
     $('opPrev').onclick=()=>this.shift(-1);$('opNext').onclick=()=>this.shift(1);
     $('operationDate').oninput=()=>{this.date=$('operationDate').value;this.error('');this.changed();};
     $('catSearch').onfocus=() => this.options();
@@ -55,7 +56,17 @@ export class CaptureForm {
     const def=SECTIONS.find(s=>s[0]===this.tag)||SECTIONS[0];
     $('captureTitle').textContent=def[1];$('captureHint').textContent=this.tag?'':'Без суммы — заметка';
     $('captureFin').hidden=!!this.tag;$('captureMode').hidden=!!this.tag;
-    $('captureMode').querySelectorAll('button').forEach(b=>b.classList.toggle('chosen',b.dataset.mode===this.mode));
+    $('captureMode').querySelectorAll('button').forEach(b=>{b.classList.toggle('chosen',b.dataset.mode===this.mode);b.disabled=this.planned&&b.dataset.mode!=='expense';});
+    $('modeRow').hidden=!!this.tag;
+    $('planToggle').setAttribute('aria-checked',String(this.planned));
+    $('planHint').hidden=!!this.tag||!this.planned;
+    $('fundHint').hidden=!this.planned;
+    $('accounts').hidden=this.planned;
+    $('dateCaption').textContent=this.planned?'Дата покупки':'Дата операции';
+    $('operationDate').setAttribute('aria-label',this.planned?'Дата покупки, ДД.ММ.ГГГГ':'Дата операции, ДД.ММ.ГГГГ');
+    $('text').placeholder=!this.tag&&this.planned?'Название покупки…':'Записать мысль или комментарий…';
+    $('text').setAttribute('aria-label',!this.tag&&this.planned?'Название покупки':'Текст записи или комментарий');
+    if(!this.tag&&this.planned)$('captureHint').textContent='Покупка из подушки';
     $('operationDate').value=this.date;
     $('categoryArea').hidden=this.mode==='transfer';
     const dateBox=$('opDateBox');dateBox.remove();$('captureFields').replaceChildren();
@@ -112,10 +123,12 @@ export class CaptureForm {
   }
   payload(raw, amount, account, article) {
     this.readFields();const f=this.values;let kind={'Задача':'task','Заметка':'note','Идея':'idea','Время':'time','Работа':'work'}[this.tag]||'note';
+    if(!this.tag && this.planned && !amount)throw new Error('Укажите сумму покупки больше нуля.');
     if(!this.tag && amount){kind='finance';const day=parseDay(this.date);if(!day)throw new Error('Проверьте дату операции.');
       const p={v:1,kind,text:raw,day:isoDay(day),mode:this.mode,amount:cents(amount)};
       if(this.mode==='transfer'){p.account=f.from;p.to_account=f.to;if(!p.account||!p.to_account||p.account===p.to_account)throw new Error('Выберите разные счета перевода.');}
       else{if(!account||!article)throw new Error('Выберите счёт и статью.');p.account=account;p.article=article;}
+      if(this.planned){if(!raw.trim())throw new Error('Укажите название покупки.');p.v=2;p.planned=true;p.mode='expense';}
       return p;
     }
     if(!raw)throw new Error('Введите текст записи.');
@@ -131,14 +144,15 @@ export class CaptureForm {
     if(kind==='work'){p.day=f.day;p.client=this.ref(this.catalog.workClients,f.client,true);p.amount=cents(f.workAmount);if(!p.day)throw new Error('Укажите дату работы.');}
     return p;
   }
-  snapshot(){this.readFields();return {tag:this.tag,mode:this.mode,date:this.date,values:{...this.values}};}
-  restore(data){if(!data)return;this.tag=data.tag||'';this.mode=['expense','income','transfer'].includes(data.mode)?data.mode:'expense';this.date=data.date||new Date().toLocaleDateString('ru-RU');this.values=data.values||{};this.render();}
+  snapshot(){this.readFields();return {tag:this.tag,mode:this.mode,planned:this.planned,previousMode:this.previousMode,date:this.date,values:{...this.values}};}
+  restore(data){if(!data)return;this.tag=data.tag||'';this.planned=data.planned===true;this.previousMode=['expense','income','transfer'].includes(data.previousMode)?data.previousMode:'expense';this.mode=['expense','income','transfer'].includes(data.mode)?data.mode:'expense';if(this.planned)this.mode='expense';this.date=data.date||new Date().toLocaleDateString('ru-RU');this.values=data.values||{};this.render();}
   reset(){this.values={};this.date=new Date().toLocaleDateString('ru-RU');this.render();this.error('');}
 }
 
 export function recordKind(e){if(e.payload)return e.payload.kind;const head=e.text.split(':')[0].toLocaleLowerCase();return ({'финансы':'finance','задача':'task','заметка':'note','мысли':'note','идея':'idea','идеи':'idea','время':'time','работа':'work','чек':'receipt'})[head]||'note';}
 export function recordText(p){
   const tag={finance:'Финансы',task:'Задача',note:'Заметка',idea:'Идея',time:'Время',work:'Работа'}[p.kind];
+  if(p.kind==='finance'&&p.planned===true)return `Финансы: План · ${p.text} · ${(p.amount/100).toLocaleString('ru-RU')} ₽ · ${p.article} · ${p.day} · Из подушки`;
   if(p.kind==='finance')return `${tag}: ${p.mode==='transfer'?p.account+' → '+p.to_account:p.account+' · '+p.article} · ${(p.amount/100).toLocaleString('ru-RU')} ₽${p.text?' · '+p.text:''} · ${p.day}`;
   const detail=[];
   if(p.kind==='work')detail.push((p.amount/100).toLocaleString('ru-RU')+' ₽',p.client?.name);

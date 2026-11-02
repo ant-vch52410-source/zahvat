@@ -13,7 +13,7 @@ import { Dictation } from './speech.js';
 import { CaptureForm, SECTIONS, recordKind, recordText } from './capture.js';
 
 /** Версия программы — показывается в меню; поднимается вместе с VERSION в sw.js. */
-const APP_VERSION = 9.1;
+const APP_VERSION = 9.2;
 const $ = (id) => document.getElementById(id);
 const ui = {
   text: $('text'), interim: $('interim'), mic: $('btnMic'), save: $('btnSave'), clear: $('btnClear'), status: $('status'),
@@ -49,7 +49,7 @@ const TAGS = [...ui.tags.querySelectorAll('.tag')].map(b => b.dataset.tag);
 // Расход кнопками
 let lists = { ...DEFAULT_LISTS, loadedAt: null };   // счета и статьи (из файла модуля Финансов)
 let amount = '';           // набранная сумма как строка: «800», «12500,5»
-let account = null;        // выбранный счёт
+let account = 'Виза';        // выбранный счёт
 let cat = null;            // выбранная статья или null
 const captureForm = new CaptureForm(() => { saveDraftSoon(); updateSaveButton(); });
 captureForm.onCategory = name => { cat=name; renderFin(); saveDraftSoon(); };
@@ -107,7 +107,7 @@ function renderFin() {
   ui.amount.textContent = formatAmount(amount);
   ui.amount.classList.toggle('empty', !amount);
   const accs = lists.accounts.slice(0, MAX_ACCOUNTS);
-  if (!accs.includes(account)) account = accs[0] || null;
+  if (!accs.includes(account)) account = accs.find(n=>n.toLocaleLowerCase()==='виза') || accs[0] || null;
   fillButtons(ui.accounts, accs, account);
   captureForm.lists=lists;
   fillButtons(ui.cats, captureForm.articles().slice(0,10), cat);
@@ -176,17 +176,18 @@ function saveDraftSoon() {
 function saveDraftNow() {
   clearTimeout(draftTimer);
   try {
-    if (ui.text.value || selectedTag || amount || cat) {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ text: ui.text.value, voice: draftVoice, tag: selectedTag, amount, cat, capture: captureForm.snapshot(), editing: structuredEditing?.id||null }));
+    if (ui.text.value || selectedTag || amount || cat || captureForm.planned) {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ text: ui.text.value, voice: draftVoice, tag: selectedTag, amount, cat, account, capture: captureForm.snapshot(), editing: structuredEditing?.id||null }));
     }
     else localStorage.removeItem(DRAFT_KEY);
   } catch { /* хранилище недоступно — не страшно, база записей отдельно */ }
 }
 function restoreDraft() {
   try {
-    account = localStorage.getItem(ACCOUNT_KEY);
+    account = 'Виза';
     const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
     if (d) {
+      account=d.account||account;
       pendingStructuredId=d.editing||null;
       ui.text.value = d.text || ''; draftVoice = !!d.voice; setTag(d.tag);
       amount=typeof d.amount==='string'?d.amount:'';cat=d.cat||null;captureForm.restore(d.capture);if(d.capture){selectedTag=d.capture.tag||null;for(const b of ui.tags.querySelectorAll('.tag'))b.setAttribute('aria-pressed',String((b.dataset.tag||null)===selectedTag));}
@@ -211,18 +212,18 @@ function newId() {
 
 /** Всё, что набрано сейчас, — чтобы вернуть после ошибки записи или «Стереть». */
 function snapshot() {
-  return { text: ui.text.value, voice: draftVoice, tag: selectedTag, amount, cat, capture: captureForm.snapshot(), editingRecord: structuredEditing };
+  return { text: ui.text.value, voice: draftVoice, tag: selectedTag, amount, cat, account, capture: captureForm.snapshot(), editingRecord: structuredEditing };
 }
 function restore(s) {
   ui.text.value = s.text;
   draftVoice = s.voice;
   setTag(s.tag);
-  structuredEditing=s.editingRecord||null;captureForm.restore(s.capture);amount = s.amount; cat = s.cat;   // после setTag: он стирает сумму, пока метка не «Финансы»
+  structuredEditing=s.editingRecord||null;account=s.account||account;captureForm.restore(s.capture);amount = s.amount; cat = s.cat;   // после setTag: он стирает сумму, пока метка не «Финансы»
   renderFin();
   saveDraftNow();
 }
 function resetInput() {
-  ui.text.value='';draftVoice=false;amount='';cat=null;captureForm.reset();renderFin();
+  ui.text.value='';draftVoice=false;amount='';cat=null;account='Виза';captureForm.reset();renderFin();
 }
 
 let structuredEditing=null,pendingStructuredId=null;
@@ -412,7 +413,7 @@ function editStructured(e){
   setTag({finance:null,task:'Задача',note:'Заметка',idea:'Идея',time:'Время',work:'Работа'}[p.kind]);
   ui.text.value=p.text||'';draftVoice=e.source==='voice';
   const values={...p,project:p.project?.id?String(p.project.id):'',client:p.client?.id?String(p.client.id):'',folder:p.folder?.id?String(p.folder.id):'',activity:p.activity?.id?String(p.activity.id):'',from:p.account,to:p.to_account,workAmount:p.kind==='work'?String(p.amount/100).replace('.',','):''};
-  captureForm.restore({tag:selectedTag,mode:p.mode||'expense',date:p.day?new Date(p.day+'T12:00:00').toLocaleDateString('ru-RU'):undefined,values});
+  captureForm.restore({tag:selectedTag,mode:p.mode||'expense',planned:p.planned===true,date:p.day?new Date(p.day+'T12:00:00').toLocaleDateString('ru-RU'):undefined,values});
   amount=p.kind==='finance'?String(p.amount/100).replace('.',','):'';account=p.account||account;cat=p.article||null;renderFin();saveDraftSoon();updateSaveButton();
 }
 
