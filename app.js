@@ -14,7 +14,7 @@ import { Dictation } from './speech.js';
 import { CaptureForm, SECTIONS, recordKind, recordText } from './capture.js';
 
 /** Версия программы — показывается в меню; поднимается вместе с VERSION в sw.js. */
-const APP_VERSION = '9.3.1';
+const APP_VERSION = '9.3.2';
 const $ = (id) => document.getElementById(id);
 const ui = {
   text: $('text'), interim: $('interim'), mic: $('btnMic'), save: $('btnSave'), clear: $('btnClear'), status: $('status'),
@@ -392,7 +392,7 @@ function feedGroup(batch, list) {
   const rows=document.createElement('ul');rows.className='batch-list';rows.append(...list.map(e=>e.id===editingId?editorItem(e):entryItem(e)));
   li.append(head,rows);return li;
 }
-/** Краткие строки по согласованному макету; полный текст остаётся в доступном описании и редакторе. */
+/** Краткие строки по макету; чеки используют текст главного экрана, исходник остаётся в редакторе. */
 function entryItem(e) {
   const li=document.createElement('li'), b=document.createElement('button');b.type='button';b.className='entry'+(e.exportedAt?' exported':'');b.dataset.id=e.id;
   b.setAttribute('aria-label',`${formatLocal(e.ts)}: ${e.text}. Нажмите, чтобы изменить`);b.title=e.text;
@@ -401,7 +401,8 @@ function entryItem(e) {
   src.innerHTML=`<svg aria-hidden="true"><use href="#${symbol}"/></svg>`;
   const txt=document.createElement('span');txt.className='txt';const title=document.createElement('span');title.className='entry-title';
   const p=e.payload, money=p?.amount?(p.amount/100).toLocaleString('ru-RU')+' ₽':'';
-  title.textContent=p?.kind==='finance'?(p.planned?p.text:p.mode==='transfer'?p.account+' → '+p.to_account:p.article)+(money?' · '+money:''):(p?.text||splitTag(e.text,KNOWN_TAGS).rest||e.text);
+  if(kind==='receipt')title.append(entryText(e));
+  else title.textContent=p?.kind==='finance'?(p.planned?p.text:p.mode==='transfer'?p.account+' → '+p.to_account:p.article)+(money?' · '+money:''):(p?.text||splitTag(e.text,KNOWN_TAGS).rest||e.text);
   const meta=document.createElement('span');meta.className='meta';
   const detail=p?.kind==='finance'?[p.planned?'План':p.account,{expense:'Расход',income:'Доход',transfer:'Перевод'}[p.mode]]:[p?.client?.name,p?.project?.name,p?.folder?.name];
   meta.textContent=[...detail,({received:'Принято на ПК',waiting:'Требует внимания'}[e.delivery]||(e.exportedAt?'Выгружено':'Новое'))].filter(Boolean).join(' · ');if(e.deliveryError)meta.title=e.deliveryError;
@@ -410,7 +411,7 @@ function entryItem(e) {
 }
 function openRepeat(batch) {
   repeatingBatch=batch;$('repeatInfo').textContent=formatShort(batch.at)+' · '+batch.records.length+' зап.';
-  $('repeatPreview').replaceChildren(...batch.records.map(e=>{const li=document.createElement('li');li.textContent=e.text;return li;}));$('repeatDlg').showModal();
+  $('repeatPreview').replaceChildren(...batch.records.map(e=>{const li=document.createElement('li');if(recordKind(e)==='receipt')li.append(entryText(e));else li.textContent=e.text;return li;}));$('repeatDlg').showModal();
 }
 function exportError(err) { showToast('Не удалось выгрузить: '+(err?.message||err)+'. Записи сохранены.'); }
 
