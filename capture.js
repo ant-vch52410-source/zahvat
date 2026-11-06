@@ -1,7 +1,8 @@
+// Запуск в Финансах и отдельный черновик плана (задачи 7, 36.2).
 // Шесть разделов и структурированный обмен с Органайзером (задача 7).
 // Формы разделов «Захвата» и точные поля обмена с Органайзером (задача 36).
 export const SECTIONS = [
-  ['', 'Захват', 'finance'], ['Задача', 'Задачи', 'task'], ['Заметка', 'Заметки', 'note'],
+  ['', 'Финансы', 'finance'], ['Задача', 'Задачи', 'task'], ['Заметка', 'Заметки', 'note'],
   ['Идея', 'Идеи', 'idea'], ['Время', 'Время', 'clock'], ['Работа', 'Работы', 'work'],
 ];
 export const isoDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -26,7 +27,7 @@ export class CaptureForm {
     this.changed=changed; this.tag=''; this.mode='expense'; this.planned=false; this.previousMode='expense'; this.date=new Date().toLocaleDateString('ru-RU');
     this.values={}; this.catalog={}; this.lists={accounts:[],cats:[]};
     $('captureMode').onclick=e=>{const b=e.target.closest('[data-mode]');if(!b)return;this.readFields();if(this.planned)return;this.mode=b.dataset.mode;this.onMode?.();this.render();this.changed();};
-    $('planToggle').onclick=()=>{this.readFields();this.planned=!this.planned;if(this.planned){this.previousMode=this.mode;this.mode='expense';}else this.mode=this.previousMode;this.error('');this.onMode?.();this.render();this.changed();};
+    $('planToggle').onclick=()=>{this.beforePlan?.();this.readFields();this.planned=!this.planned;if(this.planned){this.previousMode=this.mode;this.mode='expense';}else this.mode=this.previousMode;this.error('');this.onMode?.();this.render();this.afterPlan?.();this.changed();};
     $('opPrev').onclick=()=>this.shift(-1);$('opNext').onclick=()=>this.shift(1);
     $('operationDate').oninput=()=>{this.date=$('operationDate').value;this.error('');this.changed();};
     $('catSearch').onfocus=() => this.options();

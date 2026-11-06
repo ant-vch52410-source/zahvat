@@ -1,9 +1,11 @@
+// Сборка 06.11.2026: утверждённые компактные строки.
+// Изолированный кэш своей версии, автономный запуск (задачи 7, 36.2).
 // Шесть разделов и структурированный обмен с Органайзером (задача 7).
 // Service worker «Захвата» (задачи 1, 3, 4, 5): держит файлы приложения в кэше, чтобы оно открывалось без сети.
 // Стратегия «сначала кэш»: файлы берутся из кэша, сеть — только если файла там нет.
 // Выпускаете новую версию — увеличьте VERSION, иначе телефон продолжит показывать старую.
 
-const VERSION = 'zahvat-v9.2';   // та же цифра — APP_VERSION в app.js (видна в меню)
+const VERSION = 'zahvat-v9.3';   // та же цифра — APP_VERSION в app.js (видна в меню)
 const SHELL = [
   './',
   './index.html',
@@ -40,9 +42,9 @@ self.addEventListener('fetch', (ev) => {
   const req = ev.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
   ev.respondWith(
-    caches.match(req, { ignoreSearch: true }).then(hit => hit || fetch(req).catch(() =>
+    caches.open(VERSION).then(cache => cache.match(req, { ignoreSearch: true }).then(hit => hit || fetch(req).catch(() =>
       // без сети и без кэша: для открытия страницы отдаём главный экран
-      req.mode === 'navigate' ? caches.match('./index.html') : Response.error()
-    ))
+      req.mode === 'navigate' ? cache.match('./index.html') : Response.error()
+    )))
   );
 });

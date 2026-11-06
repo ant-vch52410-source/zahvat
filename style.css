@@ -285,3 +285,26 @@ fieldset input { width: 22px; height: 22px; }
 
 /* Переключатель плана покупки, утверждённый макет 36.2. */
 .mode-row{display:flex;gap:8px;align-items:center;margin-bottom:6px}.mode-row .mode{flex:1;margin:0;min-width:0;gap:3px}.mode-row .mode button{padding:3px 5px}#planToggle{display:flex;align-items:center;gap:5px;flex:none;border:0;background:transparent;padding:3px 0;font-size:12px}.switch-track{width:27px;height:16px;border-radius:10px;background:var(--muted);position:relative}.switch-track:after{content:"";position:absolute;width:12px;height:12px;left:2px;top:2px;border-radius:50%;background:var(--card)}[aria-checked="true"] .switch-track{background:var(--accent)}[aria-checked="true"] .switch-track:after{left:13px}.plan-hint{font-size:11px;line-height:15px;color:var(--accent);margin:0 0 6px}#fundHint{font-size:11px;color:var(--muted);margin:5px 0;min-height:28px;display:flex;align-items:center}.date-caption{font-size:11px;color:var(--muted);margin:6px 0 -3px}
+
+/* Компактные группы CSV по утверждённому макету 06.11.2026 (задача 36.2). */
+.feed,.batch-list{list-style:none;padding:0;margin:0}
+.feed>.batch{margin-top:9px}.feed>.batch:first-child{margin-top:0}
+.batch-head{display:flex;align-items:center;gap:7px;min-height:25px;border-top:1px solid var(--line);padding:3px 0;color:var(--muted);font-size:11px;line-height:14px}
+.batch-head h2{font-size:11px;font-weight:500;line-height:14px;margin:0;white-space:nowrap}
+.batch-count{font-size:10px;color:var(--muted)}
+.batch-head button{margin-left:auto;min-height:22px;padding:2px 0 2px 5px;border:0;border-radius:0;background:transparent;color:var(--accent);font-size:11px;line-height:15px;white-space:nowrap}
+.batch-head .batch-repeat{display:grid;place-items:center;width:26px;height:22px;padding:2px}
+.batch-repeat svg{width:17px;height:17px}
+.batch-new .batch-head{color:var(--accent);border-top-color:var(--accent)}.batch-new h2{font-weight:600}
+.feed .entry{grid-template-columns:20px minmax(0,1fr) auto;padding:3px 1px;gap:6px;line-height:16px;min-height:0}
+.feed .entry-title{display:block;font-size:13px;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.feed .entry .txt{display:block;min-width:0;overflow:hidden}
+.feed .entry .meta{display:block;font-size:10px;line-height:12px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.feed .entry .time{font-size:11px;white-space:nowrap}
+#repeatInfo{font-size:13px;line-height:18px}#repeatPreview{list-style:none;padding:0;margin:10px 0;max-height:230px;overflow:auto}
+#repeatPreview li{font-size:12px;line-height:16px;padding:3px 0;border-bottom:1px dotted var(--line)}
+#repeatDlg .dlg-actions{margin-top:12px;grid-template-columns:1fr 2fr}
+
+.feed .batch,.feed .batch-list li{border-bottom:0}
+.feed .entry.exported .time::after{content:none}
+.feed .entry .time{min-width:0}

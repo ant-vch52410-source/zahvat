@@ -1,3 +1,4 @@
+// Группы CSV, повтор точного файла, запуск Финансов и автономная работа (задачи 7, 36.2).
 // Шесть разделов и структурированный обмен с Органайзером (задача 7).
 // «Захват» — экран и действия (задачи 1, 2, 3, 4, 5): ввод, метки-иконки, расход кнопками, последние записи,
 // все записи с поиском и правкой, загрузка счетов и статей, выгрузка CSV, резервная копия, чек по QR-коду.
@@ -7,13 +8,13 @@ import {
   toCsv, selectForExport, mergeEntries, formatTime, formatShort, formatLocal,
   fileStamp, isSameDay, appendPhrase, normalizeForSearch, applyTag, splitTag,
   parseLists, typeAmount, formatAmount, financeText, DEFAULT_LISTS, MAX_ACCOUNTS, MAX_CATS,
-  RECEIPT_TAG, parseReceiptQr, receiptLabel,
+  RECEIPT_TAG, parseReceiptQr, receiptLabel, exportGroupKey, makeExportBatch, mergeExportBatches,
 } from './core.js';
 import { Dictation } from './speech.js';
 import { CaptureForm, SECTIONS, recordKind, recordText } from './capture.js';
 
 /** Версия программы — показывается в меню; поднимается вместе с VERSION в sw.js. */
-const APP_VERSION = 9.2;
+const APP_VERSION = 9.3;
 const $ = (id) => document.getElementById(id);
 const ui = {
   text: $('text'), interim: $('interim'), mic: $('btnMic'), save: $('btnSave'), clear: $('btnClear'), status: $('status'),
@@ -32,6 +33,9 @@ const ui = {
 };
 
 const DRAFT_KEY = 'zahvat.draft';       // черновик (текст, метка, сумма, статья) — в localStorage: пишется мгновенно
+const DRAFTS_KEY = 'zahvat.sectionDrafts';
+let draftBank = {}, activeDraftSlot = 'finance';
+let exportBatches = [], exportBusy = false, repeatingBatch = null, offlineReady = false;
 const ACCOUNT_KEY = 'zahvat.account';   // последний выбранный счёт — остаётся выбранным после сохранения
 const FIN_TAG = 'Финансы';
 const NOTE_TAG = 'Заметка';             // запись без выбранной метки
@@ -54,6 +58,8 @@ let cat = null;            // выбранная статья или null
 const captureForm = new CaptureForm(() => { saveDraftSoon(); updateSaveButton(); });
 captureForm.onCategory = name => { cat=name; renderFin(); saveDraftSoon(); };
 captureForm.onMode = () => { cat=null; $('catSearch').value=''; renderFin(); };
+captureForm.beforePlan = () => saveDraftNow();
+captureForm.afterPlan = () => loadSectionDraft(null, captureForm.planned);
 
 
 const ICON_VOICE = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" class="fill"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>';
@@ -173,26 +179,47 @@ function saveDraftSoon() {
   clearTimeout(draftTimer);
   draftTimer = setTimeout(saveDraftNow, 300);
 }
+/** Черновики разделены: запуск обычных Финансов не превращает план в фактический расход. */
+function draftSlot(tag, planned = false) { return tag || (planned ? 'finance-plan' : 'finance'); }
 function saveDraftNow() {
   clearTimeout(draftTimer);
   try {
-    if (ui.text.value || selectedTag || amount || cat || captureForm.planned) {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ text: ui.text.value, voice: draftVoice, tag: selectedTag, amount, cat, account, capture: captureForm.snapshot(), editing: structuredEditing?.id||null }));
-    }
-    else localStorage.removeItem(DRAFT_KEY);
-  } catch { /* хранилище недоступно — не страшно, база записей отдельно */ }
+    const capture=captureForm.snapshot();
+    const defaults={day:isoDate(new Date()),priority:'normal'};
+    const hasFields=Object.entries(capture.values).some(([key,value])=>value&&value!==defaults[key]);
+    if (ui.text.value || amount || cat || structuredEditing || hasFields) {
+      draftBank[activeDraftSlot]={text:ui.text.value,voice:draftVoice,tag:selectedTag,amount,cat,account,capture,editing:structuredEditing?.id||null};
+    } else delete draftBank[activeDraftSlot];
+    localStorage.setItem(DRAFTS_KEY, JSON.stringify(draftBank));
+    localStorage.removeItem(DRAFT_KEY);
+  } catch { /* основной список хранится отдельно в IndexedDB */ }
 }
+/** Восстановить только выбранный черновик, остальные остаются на телефоне. */
+function loadSectionDraft(tag, planned = false, startup = false) {
+  activeDraftSlot=draftSlot(tag,planned);
+  const d=draftBank[activeDraftSlot];
+  ui.text.value=d?.text||'';draftVoice=!!d?.voice;amount=d?.amount||'';cat=d?.cat||null;account=d?.account||'Виза';
+  pendingStructuredId=d?.editing||null;
+  structuredEditing=entries.find(e=>e.id===pendingStructuredId&&!e.exportedAt)||null;
+  setTag(tag);
+  captureForm.restore({...d?.capture,tag:tag||'',planned,date:startup?new Date().toLocaleDateString('ru-RU'):d?.capture?.date});
+  if(startup){captureForm.planned=false;captureForm.mode=d?.capture?.mode||'expense';captureForm.render();}
+  renderFin();updateSaveButton();
+}
+function changeSection(tag) { saveDraftNow();loadSectionDraft(tag,false); }
 function restoreDraft() {
   try {
-    account = 'Виза';
-    const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
-    if (d) {
-      account=d.account||account;
-      pendingStructuredId=d.editing||null;
-      ui.text.value = d.text || ''; draftVoice = !!d.voice; setTag(d.tag);
-      amount=typeof d.amount==='string'?d.amount:'';cat=d.cat||null;captureForm.restore(d.capture);if(d.capture){selectedTag=d.capture.tag||null;for(const b of ui.tags.querySelectorAll('.tag'))b.setAttribute('aria-pressed',String((b.dataset.tag||null)===selectedTag));}
+    const bank=JSON.parse(localStorage.getItem(DRAFTS_KEY)||'{}');
+    if(bank&&typeof bank==='object'&&!Array.isArray(bank))draftBank=bank;
+    const old=JSON.parse(localStorage.getItem(DRAFT_KEY)||'null');
+    if(old&&typeof old==='object'){
+      const slot=draftSlot(old.capture?.tag||old.tag,old.capture?.planned===true);
+      if(!draftBank[slot])draftBank[slot]=old;
+      // Сначала надёжно сохраняем миграцию; прежний ключ уберётся при следующем сохранении.
+      localStorage.setItem(DRAFTS_KEY,JSON.stringify(draftBank));
     }
-  } catch { /* битый черновик — пропускаем */ }
+  } catch { /* повреждённый черновик не мешает открыть список записей */ }
+  loadSectionDraft(null,false,true);
 }
 
 // ---------------- Сохранение и «Стереть» ----------------
@@ -218,7 +245,7 @@ function restore(s) {
   ui.text.value = s.text;
   draftVoice = s.voice;
   setTag(s.tag);
-  structuredEditing=s.editingRecord||null;account=s.account||account;captureForm.restore(s.capture);amount = s.amount; cat = s.cat;   // после setTag: он стирает сумму, пока метка не «Финансы»
+  structuredEditing=s.editingRecord||null;account=s.account||account;captureForm.restore(s.capture);activeDraftSlot=draftSlot(selectedTag,captureForm.planned);amount = s.amount; cat = s.cat;   // после setTag: он стирает сумму, пока метка не «Финансы»
   renderFin();
   saveDraftNow();
 }
@@ -332,45 +359,60 @@ function closeAll() {
   renderRecent();
 }
 
+/** Группы сортируются по выгрузке, внутри — по времени записи; новая очередь всегда первая. */
 function renderFeed() {
-  const q = normalizeForSearch(ui.search.value.trim());
-  const list = (q ? entries.filter(e => normalizeForSearch(e.text).includes(q)) : entries.slice())
-    .filter(e=>(!$('filterSection').value||recordKind(e)===$('filterSection').value)&&(!$('filterState').value||(e.delivery|| (e.exportedAt?'sent':'new'))===$('filterState').value))
-    .sort((a, b) => b.ts - a.ts);
-
-  ui.feedTitle.textContent = q ? `Найдено: ${list.length}` : `Все записи · ${list.length}`;
+  const q=normalizeForSearch(ui.search.value.trim()), section=$('filterSection').value, state=$('filterState').value;
+  const list=entries.filter(e=>(!q||normalizeForSearch(e.text).includes(q))&&(!section||recordKind(e)===section)&&(!state||(e.delivery||(e.exportedAt?'sent':'new'))===state)).sort((a,b)=>b.ts-a.ts);
+  ui.feedTitle.textContent=q?`Найдено: ${list.length}`:`Все записи · ${list.length}`;
   ui.feed.replaceChildren();
-  if (!list.length) {
-    const li = document.createElement('li');
-    li.className = 'empty';
-    li.textContent = q ? 'Ничего не найдено.' : 'Записей ещё нет.';
-    ui.feed.append(li);
-    return;
+  const filtered=!!(q||section||state), fresh=list.filter(e=>!e.exportedAt);
+  if(fresh.length)ui.feed.append(feedGroup(null,fresh));
+  for(const batch of exportBatches){
+    const group=list.filter(e=>exportGroupKey(e)===batch.id);
+    // Сохранённый файл доступен для повтора даже после удаления его записей с телефона.
+    if(group.length||!filtered)ui.feed.append(feedGroup(batch,group));
   }
-  for (const e of list) ui.feed.append(e.id === editingId ? editorItem(e) : entryItem(e));
+  if(!ui.feed.children.length){const empty=document.createElement('li');empty.className='empty';empty.textContent=filtered?'Ничего не найдено.':'Записей ещё нет.';ui.feed.append(empty);}
 }
-
+function feedGroup(batch, list) {
+  const li=document.createElement('li');li.className='batch'+(batch?'':' batch-new');
+  const head=document.createElement('header');head.className='batch-head';
+  const title=document.createElement('h2');title.textContent=batch?formatShort(batch.at).replace(' ',' · '):'Не отправлены';
+  if(batch)title.title='Выгрузка '+formatLocal(batch.at);
+  const count=document.createElement('span');count.className='batch-count';
+  const total=batch?batch.records.length:entries.filter(e=>!e.exportedAt).length;
+  count.textContent='· '+(list.length&&list.length!==total?list.length+' из '+total:total)+' зап.';
+  const action=document.createElement('button');action.type='button';action.disabled=exportBusy;
+  if(batch){
+    action.className='batch-repeat';action.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 8a8 8 0 0 0-14-3L3 8m0-5v5h5M4 16a8 8 0 0 0 14 3l3-3m0 5v-5h-5"/></svg>';
+    action.setAttribute('aria-label','Отправить CSV повторно: '+formatShort(batch.at));action.title='Отправить CSV этой группы повторно';
+    action.onclick=()=>openRepeat(batch);
+  }else{action.className='batch-send';action.textContent='ОТПРАВИТЬ';action.title='Отправить CSV всех неотправленных записей';action.onclick=()=>exportCsv('new','share').catch(exportError);}
+  head.append(title,count,action);
+  const rows=document.createElement('ul');rows.className='batch-list';rows.append(...list.map(e=>e.id===editingId?editorItem(e):entryItem(e)));
+  li.append(head,rows);return li;
+}
+/** Краткие строки по согласованному макету; полный текст остаётся в доступном описании и редакторе. */
 function entryItem(e) {
-  const li = document.createElement('li');
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'entry' + (e.exportedAt ? ' exported' : '');
-  b.dataset.id = e.id;
-  b.setAttribute('aria-label', `${formatLocal(e.ts)}, ${e.source === 'voice' ? 'голосом' : 'текстом'}${e.exportedAt ? ', выгружено' : ''}: ${e.text}. Нажмите, чтобы изменить`);
-  const time = document.createElement('span');
-  time.className='time';
-  time.textContent=formatShort(e.ts)+' · '+({received:'Принято на ПК',waiting:'Требует внимания'}[e.delivery]||(e.exportedAt?'Выгружено':'Новое'));
-  if(e.deliveryError)time.title=e.deliveryError;
-  const src = document.createElement('span');
-  src.className = 'src';
-  src.innerHTML = e.source === 'voice' ? ICON_VOICE : ICON_TEXT;
-  const txt = document.createElement('span');
-  txt.className = 'txt';
-  txt.append(entryText(e));
-  b.append(time, src, txt);
-  li.append(b);
-  return li;
+  const li=document.createElement('li'), b=document.createElement('button');b.type='button';b.className='entry'+(e.exportedAt?' exported':'');b.dataset.id=e.id;
+  b.setAttribute('aria-label',`${formatLocal(e.ts)}: ${e.text}. Нажмите, чтобы изменить`);b.title=e.text;
+  const src=document.createElement('span');src.className='src';
+  const kind=recordKind(e), symbol={time:'clock',receipt:'qr'}[kind]||kind;
+  src.innerHTML=`<svg aria-hidden="true"><use href="#${symbol}"/></svg>`;
+  const txt=document.createElement('span');txt.className='txt';const title=document.createElement('span');title.className='entry-title';
+  const p=e.payload, money=p?.amount?(p.amount/100).toLocaleString('ru-RU')+' ₽':'';
+  title.textContent=p?.kind==='finance'?(p.planned?p.text:p.mode==='transfer'?p.account+' → '+p.to_account:p.article)+(money?' · '+money:''):(p?.text||splitTag(e.text,KNOWN_TAGS).rest||e.text);
+  const meta=document.createElement('span');meta.className='meta';
+  const detail=p?.kind==='finance'?[p.planned?'План':p.account,{expense:'Расход',income:'Доход',transfer:'Перевод'}[p.mode]]:[p?.client?.name,p?.project?.name,p?.folder?.name];
+  meta.textContent=[...detail,({received:'Принято на ПК',waiting:'Требует внимания'}[e.delivery]||(e.exportedAt?'Выгружено':'Новое'))].filter(Boolean).join(' · ');if(e.deliveryError)meta.title=e.deliveryError;
+  const time=document.createElement('span');time.className='time';time.textContent=formatTime(e.ts);time.title=formatLocal(e.ts);
+  txt.append(title,meta);b.append(src,txt,time);li.append(b);return li;
 }
+function openRepeat(batch) {
+  repeatingBatch=batch;$('repeatInfo').textContent=formatShort(batch.at)+' · '+batch.records.length+' зап.';
+  $('repeatPreview').replaceChildren(...batch.records.map(e=>{const li=document.createElement('li');li.textContent=e.text;return li;}));$('repeatDlg').showModal();
+}
+function exportError(err) { showToast('Не удалось выгрузить: '+(err?.message||err)+'. Записи сохранены.'); }
 
 function editorItem(e) {
   const li = document.createElement('li');
@@ -414,14 +456,14 @@ function editStructured(e){
   ui.text.value=p.text||'';draftVoice=e.source==='voice';
   const values={...p,project:p.project?.id?String(p.project.id):'',client:p.client?.id?String(p.client.id):'',folder:p.folder?.id?String(p.folder.id):'',activity:p.activity?.id?String(p.activity.id):'',from:p.account,to:p.to_account,workAmount:p.kind==='work'?String(p.amount/100).replace('.',','):''};
   captureForm.restore({tag:selectedTag,mode:p.mode||'expense',planned:p.planned===true,date:p.day?new Date(p.day+'T12:00:00').toLocaleDateString('ru-RU'):undefined,values});
-  amount=p.kind==='finance'?String(p.amount/100).replace('.',','):'';account=p.account||account;cat=p.article||null;renderFin();saveDraftSoon();updateSaveButton();
+  activeDraftSlot=draftSlot(selectedTag,p.planned===true);amount=p.kind==='finance'?String(p.amount/100).replace('.',','):'';account=p.account||account;cat=p.article||null;renderFin();saveDraftSoon();updateSaveButton();
 }
 
 async function updateEntry(e, newText) {
   const text = newText.trim();
   if (!text) { showToast('Текст пустой. Чтобы убрать запись, нажмите «Удалить».'); return; }
   if(e.payload&&text!==e.text){showToast('Для записи с полями используйте «Изменить поля».');return;}
-  const changed = { ...e, text, updatedAt: Date.now(), exportedAt: text === e.text ? e.exportedAt : null };
+  const changed = text===e.text?{...e}:{...e,text,updatedAt:Date.now(),exportedAt:null,exportBatch:null,delivery:undefined,deliveryError:undefined};
   await db.putEntry(changed);
   entries = entries.map(x => x.id === e.id ? changed : x);
   editingId = null;
@@ -723,19 +765,29 @@ function hideToast() { ui.toast.hidden = true; }
 // ---------------- Выгрузка ----------------
 
 /** Выгрузить записи CSV: how = 'share' | 'download' | 'copy'. После удачи — отметить выгруженными. */
+/** Создать новую группу; внешняя передача не меняет снимок во время ожидания Android. */
 async function exportCsv(mode, how, from, to) {
-  const list = selectForExport(entries, mode, from, to);
-  if (!list.length) {
-    showToast(mode === 'new' ? 'Новых записей нет — всё уже выгружено.' : 'За выбранное время записей нет.');
-    return;
-  }
-  const csv = toCsv(list);   // колонка «выгружено» берёт прежнюю дату — считаем до отметки
-  const name = `zahvat2_${fileStamp()}.csv`;
-  let done = false;   // 'share' | 'download' | 'copy' — чем на самом деле выгрузили
-  if (how === 'share') done = await shareFile(csv, name, 'text/csv');
-  else if (how === 'download') done = downloadFile(csv, name, 'text/csv;charset=utf-8') && 'download';
-  else done = (await copyText(csv.replace(/^﻿/, ''))) && 'copy';
-  if (done) await markExported(list, done);
+  if(exportBusy)return;
+  const list=selectForExport(entries,mode,from,to);
+  if(!list.length){showToast('Нет записей к выгрузке.');return;}
+  const batch=makeExportBatch(list,newId(),Date.now());
+  exportBusy=true;render();
+  try { const done=await deliverFile(batch,how);if(done)await markExported(list,done,batch); }
+  finally {exportBusy=false;render();}
+}
+async function deliverFile(batch, how) {
+  if(how==='share')return shareFile(batch.csv,batch.name,'text/csv');
+  if(how==='download')return downloadFile(batch.csv,batch.name,'text/csv;charset=utf-8')&&'download';
+  return await copyText(batch.csv.replace(/^\uFEFF/,''))&&'copy';
+}
+/** Повтор отправляет прежний файл и не переносит записи в новую группу. */
+async function resendBatch(batch) {
+  if(!batch||exportBusy)return;
+  exportBusy=true;$('repeatSend').disabled=true;
+  try {
+    const done=await deliverFile(batch,'share');
+    if(done){$('repeatDlg').close();showToast(`Повторно выгружено: ${batch.records.length} зап.`);}
+  }finally{exportBusy=false;$('repeatSend').disabled=false;render();}
 }
 
 /**
@@ -788,34 +840,36 @@ async function copyText(text) {
   }
 }
 
-/** Отметить записи выгруженными и запомнить, что было раньше, — для «Отменить отметку». */
-async function markExported(list, how) {
-  const now = Date.now();
-  const items = list.map(e => ({ id: e.id, prev: e.exportedAt || null }));
-  const prevLast = (await db.getSetting('lastExportAt')) || null;
-  const changed = list.map(e => ({ ...e, exportedAt: now }));
-  await db.putEntries(changed);
-  const byId = new Map(changed.map(e => [e.id, e]));
-  entries = entries.map(e => byId.get(e.id) || e);
-  await db.setSetting('lastExportAt', now);
-  await db.setSetting('lastExportBatch', { at: now, prevLast, items });
+/** Записи, файл группы и отмена фиксируются в одной транзакции. */
+async function markExported(list, how, batch) {
+  const selected=new Map(list.map(e=>[e.id,e]));
+  const current=entries.filter(e=>selected.has(e.id)&&e.updatedAt===selected.get(e.id).updatedAt);
+  const items=current.map(e=>({id:e.id,prev:e.exportedAt||null,prevBatch:e.exportBatch||null}));
+  const changed=current.map(e=>({...e,exportedAt:batch.at,exportBatch:batch.id}));
+  const next=mergeExportBatches([batch],exportBatches),prevLast=await db.getSetting('lastExportAt')||null;
+  await db.putState(changed,{exportBatches:next,lastExportAt:batch.at,lastExportBatch:{at:batch.at,groupId:batch.id,prevLast,items}});
+  const byId=new Map(changed.map(e=>[e.id,e]));entries=entries.map(e=>byId.get(e.id)||e);exportBatches=next;
   render();
-  const verb = how === 'copy' ? 'Скопировано' : how === 'download' ? 'Скачано в Загрузки' : 'Отправлено';
-  showToast(`${verb}: ${list.length} зап.`, 'Отменить отметку', undoExport, 8000);
+  const verb=how==='copy'?'Скопировано':how==='download'?'Скачано в Загрузки':'Передано';
+  showToast(`${verb}: ${list.length} зап.`,'Отменить отметку',()=>undoExport().catch(exportError),8000);
 }
-
 async function undoExport() {
-  const batch = await db.getSetting('lastExportBatch');
-  if (!batch || !batch.items.length) { showToast('Отменять нечего.'); return; }
-  const prev = new Map(batch.items.map(i => [i.id, i.prev]));
-  const changed = entries.filter(e => prev.has(e.id)).map(e => ({ ...e, exportedAt: prev.get(e.id) }));
-  await db.putEntries(changed);
-  const byId = new Map(changed.map(e => [e.id, e]));
-  entries = entries.map(e => byId.get(e.id) || e);
-  await db.setSetting('lastExportAt', batch.prevLast || null);
-  await db.setSetting('lastExportBatch', null);
-  render();
-  showToast(`Отметка снята: ${changed.length} зап. снова «новые».`);
+  const batch=await db.getSetting('lastExportBatch');
+  if(!batch?.items?.length){showToast('Отменять нечего.');return;}
+  const prev=new Map(batch.items.map(e=>[e.id,e]));
+  const changed=entries.filter(e=>prev.has(e.id)&&e.exportedAt===batch.at).map(e=>({...e,exportedAt:prev.get(e.id).prev,exportBatch:prev.get(e.id).prevBatch||null}));
+  const next=exportBatches.filter(e=>e.id!==batch.groupId);
+  await db.putState(changed,{exportBatches:next,lastExportAt:batch.prevLast||null,lastExportBatch:null});
+  const byId=new Map(changed.map(e=>[e.id,e]));entries=entries.map(e=>byId.get(e.id)||e);exportBatches=next;render();showToast(`Отметка снята: ${changed.length} зап.`);
+}
+/** Старые отправки группируются по ранее сохранённому общему времени, без изменения id и версии. */
+async function loadExportBatches() {
+  const saved=await db.getSetting('exportBatches'), next=mergeExportBatches(saved);
+  const known=new Set(next.map(e=>e.id)),groups=new Map();
+  for(const e of entries){const key=exportGroupKey(e);if(!key||known.has(key))continue;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(e);}
+  for(const [id,list] of groups)next.push(makeExportBatch(list,id,list[0].exportedAt));
+  exportBatches=mergeExportBatches(next);
+  if(groups.size)await db.putState([],{exportBatches});
 }
 
 // ---------------- Резервная копия ----------------
@@ -838,17 +892,19 @@ async function restoreJson(file) {
   if (!incoming) { showToast('В файле нет записей «Захвата».'); return; }
   // Сравниваем с тем, что лежит в базе прямо сейчас (а не со списком в памяти)
   const { toWrite, added, updated, skipped } = mergeEntries(await db.getAllEntries(), incoming);
-  if (toWrite.length) await db.putEntries(toWrite);
+  const settings=await db.getAllSettings(), restoredSettings={};
+  exportBatches=mergeExportBatches(settings.exportBatches,data.settings?.exportBatches);
+  restoredSettings.exportBatches=exportBatches;
   // Настройки из копии берём только те, которых здесь нет
   if (data.settings && typeof data.settings === 'object') {
-    const current = await db.getAllSettings();
-    for (const [k, v] of Object.entries(data.settings)) if (!(k in current)) await db.setSetting(k, v);
+    for(const [k,v] of Object.entries(data.settings))if(!(k in settings)&&k!=='exportBatches')restoredSettings[k]=v;
   }
+  await db.putState(toWrite,restoredSettings);
   const fl = await db.getSetting('finLists');
   if (fl && fl.accounts && fl.cats) { lists = fl; renderFin(); }
   const catalog=await db.getSetting('captureCatalog');if(catalog?.app==='zahvat-catalog')captureForm.catalog=catalog;captureForm.lists=lists;captureForm.render();renderFin();
   entries = await db.getAllEntries();
-  render();
+  await loadExportBatches();render();
   showToast(`Восстановлено: добавлено ${added}, обновлено ${updated}, без изменений ${skipped}.`);
 }
 
@@ -858,7 +914,7 @@ async function openMenu() {
   const fresh = entries.filter(e => !e.exportedAt).length;
   const last = await db.getSetting('lastExportAt');
   ui.menuInfo.textContent = `Новых: ${fresh} · всего: ${entries.length}\n` +
-    `Последняя выгрузка: ${last ? formatShort(last) : 'ещё не было'}\nВерсия ${APP_VERSION}`;
+    `Последняя выгрузка: ${last ? formatShort(last) : 'ещё не было'}\nВерсия ${APP_VERSION} · ${offlineReady?'Готово без интернета':'Подготовка работы без интернета'}`;
   ui.listsInfo.textContent = lists.loadedAt
     ? `Счетов ${lists.accounts.length}, статей ${lists.cats.length} · загружено ${formatShort(lists.loadedAt)}`
     : 'Сейчас примеры — загрузите файл из модуля Финансов';
@@ -905,6 +961,8 @@ async function onMenuAction(act) {
 // ---------------- Запуск ----------------
 
 function wire() {
+  $('repeatCancel').onclick=()=>$('repeatDlg').close();
+  $('repeatSend').onclick=()=>resendBatch(repeatingBatch).catch(exportError);
   $('showAll').onclick=()=>openAll();
   for(const id of ['filterSection','filterState'])$(id).onchange=()=>{editingId=null;renderFeed();};
   ui.text.addEventListener('input', () => {
@@ -921,7 +979,7 @@ function wire() {
   ui.tags.addEventListener('click', (ev) => {
     const b = ev.target.closest('.tag');
     if (!b) return;
-    setTag(b.dataset.tag||null);
+    changeSection(b.dataset.tag||null);
     saveDraftSoon();
   });
   // «Сохранить» и «Стереть» не забирают фокус у поля — клавиатура не прыгает
@@ -1033,7 +1091,9 @@ function wire() {
 
 async function init() {
   wire();
+  prepareOffline();
   restoreDraft();
+  history.replaceState({view:'home'},'');
   captureForm.lists=lists;captureForm.render();renderFin();
   updateStatus();
   // Просим браузер не стирать базу при нехватке места
@@ -1047,19 +1107,25 @@ async function init() {
   renderFin();
   try {
     entries = await db.getAllEntries();
+    await loadExportBatches();
     if(pendingStructuredId)structuredEditing=entries.find(e=>e.id===pendingStructuredId&&!e.exportedAt)||null;
   } catch (err) {
     showToast('База недоступна: ' + (err && err.message || err) + '. Запишите текст и сделайте резервную копию позже.');
   }
   render();
-  if ('serviceWorker' in navigator) {
-    // Пришла новая версия — перезагрузиться сразу, если ничего не набрано (иначе подхватится при следующем открытии)
-    const hadOld = !!navigator.serviceWorker.controller;
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (hadOld && !ui.text.value.trim() && !amount && !ui.interim.textContent.trim() && !dictation.recording && !Object.values(captureForm.values).some(Boolean) && !document.querySelector('dialog[open]')) location.reload();
-    });
-    navigator.serviceWorker.register('sw.js').catch(() => { /* без офлайна, но работает */ });
-  }
+
+}
+
+/** Все файлы приложения заранее сохраняются локально; операции с данными сети не ждут. */
+function prepareOffline() {
+  if(!('serviceWorker' in navigator))return;
+  const hadOld=!!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(hadOld&&!exportBusy&&!ui.text.value.trim()&&!amount&&!ui.interim.textContent.trim()&&!dictation.recording&&!Object.values(captureForm.values).some(Boolean)&&!document.querySelector('dialog[open]'))location.reload();
+  });
+  navigator.serviceWorker.register(new URL('./sw.js',import.meta.url),{updateViaCache:'none'})
+    .then(()=>navigator.serviceWorker.ready).then(()=>{offlineReady=true;})
+    .catch(()=>{if(!navigator.serviceWorker.controller&&navigator.onLine){ui.status.textContent='Подготовить открытие без интернета не удалось. Откройте приложение ещё раз при наличии связи.';}});
 }
 
 init();

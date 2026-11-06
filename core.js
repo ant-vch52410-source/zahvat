@@ -1,3 +1,4 @@
+// Группы CSV, неизменяемый файл для повтора и совместимость копий (задачи 7, 36.2).
 // Шесть разделов и структурированный обмен с Органайзером (задача 7).
 // Чистые функции «Захвата» (задачи 1, 2, 3, 5): CSV, даты, отбор записей, объединение резервных копий, метки, расходы кнопками.
 // Без обращения к странице и базе — поэтому их проверяет tests.html.
@@ -134,7 +135,7 @@ export function mergeEntries(existing, incoming) {
     if (!e) { skipped++; continue; }
     const old = byId.get(e.id);
     if (!old) { added++; toWrite.push(e); byId.set(e.id, e); }
-    else if ((e.updatedAt || 0) > (old.updatedAt || 0)) { updated++; toWrite.push(e); byId.set(e.id, e); }
+    else if ((e.updatedAt || 0) > (old.updatedAt || 0) || ((e.updatedAt||0)===(old.updatedAt||0) && (e.exportedAt||0)>(old.exportedAt||0))) { updated++; toWrite.push(e); byId.set(e.id, e); }
     else skipped++;
   }
   return { toWrite, added, updated, skipped };
@@ -151,6 +152,7 @@ export function normalizeEntry(e) {
     text: e.text,
     source: e.source === 'voice' ? 'voice' : 'text',
     exportedAt: Number.isFinite(e.exportedAt) ? e.exportedAt : null,
+    ...(typeof e.exportBatch==='string'&&e.exportBatch?{exportBatch:e.exportBatch}:{}),
     ...(e.payload&&typeof e.payload==='object'&&!Array.isArray(e.payload)?{payload:JSON.parse(JSON.stringify(e.payload))}:{}),
     ...(['received','waiting'].includes(e.delivery)?{delivery:e.delivery,deliveryError:typeof e.deliveryError==='string'?e.deliveryError:''}:{}),
   };
@@ -326,4 +328,35 @@ export function receiptLabel(raw) {
   if (!r) return raw;
   const [whole, frac] = r.sum.toFixed(2).split('.');
   return `${formatShort(r.ts)} · ${formatAmount(whole)},${frac} ₽`;
+}
+
+/** Ключ последней выгрузки записи; прежние отправки узнаются по общему времени. */
+export function exportGroupKey(entry) {
+  return entry.exportedAt ? (entry.exportBatch || 'legacy-' + entry.exportedAt) : null;
+}
+
+/** Снимок состава и точного CSV: при повторе содержимое не пересчитывается. */
+export function makeExportBatch(list, id, at) {
+  const records = list.map(e => ({ ...JSON.parse(JSON.stringify(e)), exportedAt: at, exportBatch: id }));
+  return { id, at, name: `zahvat2_${fileStamp(new Date(at))}_${id.replace(/[^a-zA-Z0-9]/g,'').slice(-8)}.csv`,
+    records, csv: toCsv(records) };
+}
+
+/** Проверить сохранённые группы из базы или копии, сохраняя исходные байты файла. */
+export function mergeExportBatches(current, incoming = []) {
+  const byId = new Map();
+  for (const b of [...(Array.isArray(current)?current:[]), ...(Array.isArray(incoming)?incoming:[])]) {
+    if (!b || typeof b.id!=='string' || !b.id || !Number.isFinite(b.at) || !Array.isArray(b.records) || byId.has(b.id)) continue;
+    const records=b.records.map(normalizeEntry);
+    if (!records.length || records.some(e=>!e) || new Set(records.map(e=>e.id)).size!==records.length) continue;
+    const name=typeof b.name==='string'&&/^zahvat2_[a-zA-Z0-9_-]+\.csv$/.test(b.name)?b.name:`zahvat2_${fileStamp(new Date(b.at))}.csv`;
+    let csv=toCsv(records);
+    if(typeof b.csv==='string'){
+      const rows=parseCsv(b.csv), expected=parseCsv(csv);
+      // Местные дата/время могли измениться при смене часового пояса; текст, id и данные должны совпасть.
+      if(rows.length===expected.length && rows.every((row,i)=>row.length===7 && (i===0?row.join(';')===CSV_COLUMNS.join(';'):[0,3,4,6].every(k=>row[k]===expected[i][k]))))csv=b.csv;
+    }
+    byId.set(b.id,{id:b.id,at:b.at,name,records,csv});
+  }
+  return [...byId.values()].sort((a,b)=>b.at-a.at || b.id.localeCompare(a.id));
 }

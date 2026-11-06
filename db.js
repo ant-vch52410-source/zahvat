@@ -1,3 +1,4 @@
+// Атомарные отметки групп выгрузки и восстановление обмена (задачи 7, 36.2).
 // База «Захвата» в IndexedDB (задача 1): записи и настройки. Всё хранится только на телефоне.
 
 const DB_NAME = 'zahvat';
@@ -38,8 +39,10 @@ async function tx(stores, mode, work) {
     t.oncomplete = () => resolve(result);
     t.onerror = () => reject(t.error);
     t.onabort = () => reject(t.error);
-    const r = work(t);
-    if (r instanceof IDBRequest) r.onsuccess = () => { result = r.result; };
+    try {
+      const r = work(t);
+      if (r instanceof IDBRequest) r.onsuccess = () => { result = r.result; };
+    } catch (error) { t.abort(); reject(error); }
   });
 }
 
@@ -69,3 +72,10 @@ export async function getAllSettings() {
   });
   return out;
 }
+
+/** Записи и связанные настройки фиксируются вместе либо не меняются совсем. */
+export const putState = (list, settings = {}) => tx(['entries','settings'], 'readwrite', t => {
+  const entries=t.objectStore('entries'), values=t.objectStore('settings');
+  for(const e of list)entries.put(e);
+  for(const [key,value] of Object.entries(settings))values.put(value,key);
+});
