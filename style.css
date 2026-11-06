@@ -308,3 +308,7 @@ fieldset input { width: 22px; height: 22px; }
 .feed .batch,.feed .batch-list li{border-bottom:0}
 .feed .entry.exported .time::after{content:none}
 .feed .entry .time{min-width:0}
+
+/* Контраст основных кнопок всех окон выгрузки, исправление 9.3.1 (задача 36.2).
+   Общий .dlg-actions button не должен заменять акцентный фон белым. */
+.dlg-actions .save{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
