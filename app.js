@@ -18,7 +18,7 @@ import { Dictation } from './speech.js';
 import { CaptureForm, SECTIONS, recordKind, recordText } from './capture.js';
 
 /** Версия программы — показывается в меню; поднимается вместе с VERSION в sw.js. */
-const APP_VERSION = '9.4.0';
+const APP_VERSION = '9.4.1';
 const $ = (id) => document.getElementById(id);
 const ui = {
   text: $('text'), interim: $('interim'), mic: $('btnMic'), save: $('btnSave'), clear: $('btnClear'), status: $('status'),

@@ -8,9 +8,10 @@ const node=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.classNa
 /** Покупки финансируются общей подушкой; свободные деньги не списываются второй раз. */
 export function projectScenario(packet,choices,offset=0){
   const purchases=new Map(packet.purchases.map(p=>[p.id,p]));
+  const tomorrow=new Date(Date.parse(packet.start+'T12:00:00')+86400000).toLocaleDateString('sv-SE');
   return packet.curve.map(point=>{
     let spending=0;
-    for(const choice of choices){const p=purchases.get(choice.id);if(p&&p.eligible!==false&&choice.included&&choice.day&&choice.day<=point.day)spending+=p.amount;}
+    for(const choice of choices){const p=purchases.get(choice.id),day=choice.day&&choice.day<=packet.start?tomorrow:choice.day;if(p&&p.eligible!==false&&choice.included&&day&&day<=point.day)spending+=p.amount;}
     return {...point,free:point.free+(typeof offset==='function'?offset(point.day):offset),cushion:point.cushion-spending};
   });
 }
@@ -102,7 +103,10 @@ export class PhonePlan{
   }
   async submit(){
     try{
-      for(const c of this.draft.choices)if(c.included&&(!c.day||c.day<=this.packet.start||c.day>this.packet.end))throw new Error('Выберите будущие даты в пределах графика.');
+      for(const c of this.draft.choices){
+        const p=this.packet.purchases.find(p=>p.id===c.id),unchanged=p&&c.day===p.day&&c.included===p.included;
+        if(c.included&&(!c.day||(!unchanged&&(c.day<=this.packet.start||c.day>this.packet.end))))throw new Error('Выберите будущие даты в пределах графика.');
+      }
       const now=Date.now();this.command={id:'scenario-'+crypto.randomUUID(),ts:now,updatedAt:now,text:'Сценарий телефона',source:'text',payload:{v:3,kind:'finance',mode:'phone_scenario',base:this.packet.version,choices:structuredClone(this.draft.choices)}};
       await db.setSetting('phonePlanCommand',this.command);this.renderStatus();this.drive.schedule(true);
     }catch(error){document.getElementById('planStatus').textContent=error.message;}
