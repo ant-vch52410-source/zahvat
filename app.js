@@ -1,3 +1,4 @@
+// Обмен через Google Диск и один сценарий телефона (задача 36.3).
 // Группы CSV, повтор точного файла, запуск Финансов и автономная работа (задачи 7, 36.2).
 // Шесть разделов и структурированный обмен с Органайзером (задача 7).
 // «Захват» — экран и действия (задачи 1, 2, 3, 4, 5): ввод, метки-иконки, расход кнопками, последние записи,
@@ -10,11 +11,14 @@ import {
   parseLists, typeAmount, formatAmount, financeText, DEFAULT_LISTS, MAX_ACCOUNTS, MAX_CATS,
   RECEIPT_TAG, parseReceiptQr, receiptLabel, exportGroupKey, makeExportBatch, mergeExportBatches,
 } from './core.js';
+import {PhonePlan} from './plan.js';
+import {DriveExchange} from './sync.js';
+import {adjustedBalances,isLocked,isFinancial} from './sync-core.js';
 import { Dictation } from './speech.js';
 import { CaptureForm, SECTIONS, recordKind, recordText } from './capture.js';
 
 /** Версия программы — показывается в меню; поднимается вместе с VERSION в sw.js. */
-const APP_VERSION = '9.3.2';
+const APP_VERSION = '9.4.0';
 const $ = (id) => document.getElementById(id);
 const ui = {
   text: $('text'), interim: $('interim'), mic: $('btnMic'), save: $('btnSave'), clear: $('btnClear'), status: $('status'),
@@ -42,6 +46,8 @@ const NOTE_TAG = 'Заметка';             // запись без выбра
 // Метки, которые узнаются в ленте: нынешние и старые (до задачи 3 были «Идея» и «Задача»)
 const KNOWN_TAGS = ['Финансы', 'Идеи', 'Мысли', 'Заметка', 'Идея', 'Задача', 'Время', 'Работа', RECEIPT_TAG];
 
+const drive=new DriveExchange(refreshDrive);
+const phonePlan=new PhonePlan(drive,()=>entries);
 let entries = [];          // все записи в памяти (их немного, так проще и быстрее)
 let draftVoice = false;    // в текущем тексте есть надиктованное → источник 'voice'
 let editingId = null;      // какую запись сейчас правим (в «Все записи»)
@@ -110,6 +116,7 @@ function setTag(tag) {
 
 /** Нарисовать сумму, кнопки счетов и статей (первые 2 и 9 из файла — сколько влезает на экран). */
 function renderFin() {
+  renderDriveBalance();
   ui.amount.textContent = formatAmount(amount);
   ui.amount.classList.toggle('empty', !amount);
   const accs = lists.accounts.slice(0, MAX_ACCOUNTS);
@@ -148,6 +155,7 @@ async function loadLists(file) {
   const text=await file.text();
   if(text.trim().startsWith('{')){
     const data=JSON.parse(text);
+    if(data.app==='zahvat-drive'){await drive.connect(data);showToast('Google Диск подключён.');return;}
     if(data.app==='zahvat-receipt'&&data.v===1&&Array.isArray(data.records)){
       const byId=new Map(data.records.filter(r=>r&&typeof r.id==='string').map(r=>[r.id,r]));
       const changed=entries.map(e=>{const r=byId.get(e.id);if(!r||!['received','waiting'].includes(r.status)||!e.exportedAt)return e;
@@ -270,7 +278,7 @@ async function saveEntry() {
   // Поле сбрасываем сразу: если начать следующую запись, пока идёт запись в базу, она не пропадёт
   resetInput();
   try {
-    await db.putEntry(entry);
+    await db.saveCapture(entry);
   } catch (err) {
     if (ui.text.value) before.text = before.text + '\n' + ui.text.value;
     restore(before);
@@ -280,7 +288,7 @@ async function saveEntry() {
   saveDraftNow();   // черновик стираем только после удачной записи
   structuredEditing=null;entries=entries.filter(e=>e.id!==entry.id);entries.push(entry);
   render();
-  showToast('Сохранено');
+  showToast('Сохранено');drive.schedule(true);
 }
 
 /** «Стереть»: очистить поле, сумму, статью и метку; можно вернуть из сообщения. */
@@ -297,6 +305,7 @@ function clearInput() {
 // ---------------- Последние записи и «Все записи» ----------------
 
 function render() {
+  renderDriveBalance();
   renderRecent();
   if (!ui.allView.hidden) renderFeed();
 }
@@ -405,7 +414,7 @@ function entryItem(e) {
   else title.textContent=p?.kind==='finance'?(p.planned?p.text:p.mode==='transfer'?p.account+' → '+p.to_account:p.article)+(money?' · '+money:''):(p?.text||splitTag(e.text,KNOWN_TAGS).rest||e.text);
   const meta=document.createElement('span');meta.className='meta';
   const detail=p?.kind==='finance'?[p.planned?'План':p.account,{expense:'Расход',income:'Доход',transfer:'Перевод'}[p.mode]]:[p?.client?.name,p?.project?.name,p?.folder?.name];
-  meta.textContent=[...detail,({received:'Принято на ПК',waiting:'Требует внимания'}[e.delivery]||(e.exportedAt?'Выгружено':'Новое'))].filter(Boolean).join(' · ');if(e.deliveryError)meta.title=e.deliveryError;
+  meta.textContent=[...detail,({received:'Принято на ПК',waiting:'Требует внимания'}[e.delivery]||(e.cloudRevision?'На Диске · ждёт ПК':e.cloudSending?'Ожидает подтверждения Диска':e.exportedAt?'Выгружено':'Новое'))].filter(Boolean).join(' · ');if(e.deliveryError)meta.title=e.deliveryError;
   const time=document.createElement('span');time.className='time';time.textContent=formatTime(e.ts);time.title=formatLocal(e.ts);
   txt.append(title,meta);b.append(src,txt,time);li.append(b);return li;
 }
@@ -451,7 +460,7 @@ function button(label, cls, onClick) {
 
 function editStructured(e){
   if(ui.text.value.trim()||amount){showToast('Сначала сохраните текущий черновик.');return;}
-  if(e.exportedAt){showToast('Запись уже выгружена. Исправьте её в Органайзере, чтобы не создавать расхождения.');return;}
+  if(isLocked(e)){showToast('Запись уже передана. Исправьте её в Органайзере, чтобы не создавать расхождения.');return;}
   const p=e.payload;closeAll();structuredEditing=e;
   setTag({finance:null,task:'Задача',note:'Заметка',idea:'Идея',time:'Время',work:'Работа'}[p.kind]);
   ui.text.value=p.text||'';draftVoice=e.source==='voice';
@@ -465,15 +474,16 @@ async function updateEntry(e, newText) {
   if (!text) { showToast('Текст пустой. Чтобы убрать запись, нажмите «Удалить».'); return; }
   if(e.payload&&text!==e.text){showToast('Для записи с полями используйте «Изменить поля».');return;}
   const changed = text===e.text?{...e}:{...e,text,updatedAt:Date.now(),exportedAt:null,exportBatch:null,delivery:undefined,deliveryError:undefined};
-  await db.putEntry(changed);
+  try{await db.saveCapture(changed);}catch{showToast('Запись уже передана. Исправьте её в Органайзере.');return;}
   entries = entries.map(x => x.id === e.id ? changed : x);
   editingId = null;
   render();
-  showToast('Изменено');
+  showToast('Изменено');drive.schedule(true);
 }
 
 async function removeEntry(e) {
-  await db.deleteEntry(e.id);
+  if(isFinancialLocked(e)){showToast('Запись уже передана. Исправьте её в Органайзере.');return;}
+  try{await db.removeCapture(e.id);}catch{showToast('Запись уже передана. Исправьте её в Органайзере.');return;}
   entries = entries.filter(x => x.id !== e.id);
   editingId = null;
   render();
@@ -739,14 +749,14 @@ async function saveReceipt(raw) {
   const now = Date.now();
   const entry = { id: newId(), ts: now, createdAt: now, updatedAt: now, text, source: 'text', exportedAt: null };
   try {
-    await db.putEntry(entry);
+    await db.saveCapture(entry);
   } catch (err) {
     showToast('Не удалось сохранить чек: ' + (err && err.message || err));
     return;
   }
   entries=entries.filter(e=>e.id!==entry.id);entries.push(entry);
   render();
-  showToast(`Чек сохранён: ${receiptLabel(raw)}`);
+  showToast(`Чек сохранён: ${receiptLabel(raw)}`);drive.schedule(true);
 }
 
 // ---------------- Сообщения ----------------
@@ -878,7 +888,7 @@ async function loadExportBatches() {
 async function backupJson() {
   const data = {
     app: 'zahvat', format: 1, savedAt: new Date().toISOString(),
-    entries, settings: await db.getAllSettings(),
+    entries, settings: Object.fromEntries(Object.entries(await db.getAllSettings()).filter(([k])=>!k.startsWith('drive'))),
   };
   downloadFile(JSON.stringify(data, null, 1), `zahvat_backup_${fileStamp()}.json`, 'application/json');
   await db.setSetting('lastBackupAt', Date.now());
@@ -898,7 +908,7 @@ async function restoreJson(file) {
   restoredSettings.exportBatches=exportBatches;
   // Настройки из копии берём только те, которых здесь нет
   if (data.settings && typeof data.settings === 'object') {
-    for(const [k,v] of Object.entries(data.settings))if(!(k in settings)&&k!=='exportBatches')restoredSettings[k]=v;
+    for(const [k,v] of Object.entries(data.settings))if(!(k in settings)&&k!=='exportBatches'&&!k.startsWith('drive'))restoredSettings[k]=v;
   }
   await db.putState(toWrite,restoredSettings);
   const fl = await db.getSetting('finLists');
@@ -906,6 +916,7 @@ async function restoreJson(file) {
   const catalog=await db.getSetting('captureCatalog');if(catalog?.app==='zahvat-catalog')captureForm.catalog=catalog;captureForm.lists=lists;captureForm.render();renderFin();
   entries = await db.getAllEntries();
   await loadExportBatches();render();
+  drive.schedule(true);
   showToast(`Восстановлено: добавлено ${added}, обновлено ${updated}, без изменений ${skipped}.`);
 }
 
@@ -948,6 +959,7 @@ async function onMenuAction(act) {
   closeMenu();
   try {
     if (act === 'all') openAll();
+    else if (act === 'drive') openDriveDialog();
     else if (act === 'lists') ui.fileLists.click();
     else if (act === 'share' || act === 'download' || act === 'copy') await exportCsv('new', act);
     else if (act === 'period') openExportDialog();
@@ -962,6 +974,12 @@ async function onMenuAction(act) {
 // ---------------- Запуск ----------------
 
 function wire() {
+  $('viewCapture').onclick=()=>setPhoneView(false);
+  $('viewPlan').onclick=()=>setPhoneView(true);
+  $('driveClose').onclick=()=>$('driveDlg').close();
+  $('driveConnect').onclick=()=>ui.fileLists.click();
+  $('driveNow').onclick=()=>{drive.schedule(true);};
+  $('driveDisconnect').onclick=async()=>{await drive.disconnect();openDriveDialog();};
   $('repeatCancel').onclick=()=>$('repeatDlg').close();
   $('repeatSend').onclick=()=>resendBatch(repeatingBatch).catch(exportError);
   $('showAll').onclick=()=>openAll();
@@ -1114,7 +1132,9 @@ async function init() {
     showToast('База недоступна: ' + (err && err.message || err) + '. Запишите текст и сделайте резервную копию позже.');
   }
   render();
-
+  await phonePlan.init();
+  await drive.init();
+  await refreshDrive();
 }
 
 /** Все файлы приложения заранее сохраняются локально; операции с данными сети не ждут. */
@@ -1128,5 +1148,38 @@ function prepareOffline() {
     .then(()=>navigator.serviceWorker.ready).then(()=>{offlineReady=true;})
     .catch(()=>{if(!navigator.serviceWorker.controller&&navigator.onLine){ui.status.textContent='Подготовить открытие без интернета не удалось. Откройте приложение ещё раз при наличии связи.';}});
 }
+
+
+// Вкладка плана, остатки и подключение Google Диска (задача 36.3).
+function setPhoneView(plan){
+  $('captureView').hidden=plan;$('phonePlanView').hidden=!plan;
+  $('viewCapture').setAttribute('aria-pressed',String(!plan));$('viewPlan').setAttribute('aria-pressed',String(plan));
+  $('btnScan').hidden=plan;ui.mic.hidden=plan;if(plan)phonePlan.refresh();
+}
+function isFinancialLocked(e){return isFinancial(e)&&!!(e.cloudRevision||e.cloudSending);}
+async function refreshDrive(){
+  entries=await db.getAllEntries();
+  const c=await db.getSetting('captureCatalog'),fl=await db.getSetting('finLists');
+  if(c?.app==='zahvat-catalog')captureForm.catalog=c;
+  if(fl?.accounts&&fl.cats){lists=fl;captureForm.lists=lists;}
+  // Не перерисовывать форму с незавершённым вводом при приходе квитанции.
+  render();await phonePlan.refresh();if($('driveDlg').open)updateDriveDialog();
+}
+function renderDriveBalance(){
+  const box=$('driveBalance');if(!box)return;
+  const snapshot=drive.state.snapshot?.balances;
+  const today=isoDate(new Date()),rows=adjustedBalances(snapshot,entries,today),a=rows?.find(r=>r.name===account);
+  box.hidden=!a;if(!a)return;
+  const money=n=>(n/100).toLocaleString('ru-RU',{maximumFractionDigits:2})+' ₽';
+  $('driveAmount').textContent=`${a.name} ${money(a.estimated)} · свободно ${money(a.availableEstimated)}`;
+  const time=new Date(snapshot.asOf).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+  $('driveTime').textContent=`ПК ${time}${a.pending?' · с новыми записями':''}${a.uncertain?' · есть неразобранные':''}`;
+  box.title='Последний остаток компьютера с учётом ещё не принятых расходов, доходов и переводов. План не списывается.';
+}
+function updateDriveDialog(){
+  $('driveInfo').textContent=drive.config?(drive.busy?'Идёт обмен…':drive.state.error||`Подключено${drive.last?' · обмен '+new Date(drive.last).toLocaleString('ru-RU'):''}`):'Обмен не подключён';
+  $('driveNow').disabled=!drive.config||drive.busy;$('driveDisconnect').disabled=!drive.config;
+}
+function openDriveDialog(){updateDriveDialog();if(!$('driveDlg').open)$('driveDlg').showModal();}
 
 init();

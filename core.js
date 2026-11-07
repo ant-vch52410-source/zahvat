@@ -1,3 +1,4 @@
+// Обмен через Google Диск и один сценарий телефона (задача 36.3).
 // Группы CSV, неизменяемый файл для повтора и совместимость копий (задачи 7, 36.2).
 // Шесть разделов и структурированный обмен с Органайзером (задача 7).
 // Чистые функции «Захвата» (задачи 1, 2, 3, 5): CSV, даты, отбор записей, объединение резервных копий, метки, расходы кнопками.
@@ -151,6 +152,10 @@ export function normalizeEntry(e) {
     updatedAt: Number.isFinite(e.updatedAt) ? e.updatedAt : e.ts,
     text: e.text,
     source: e.source === 'voice' ? 'voice' : 'text',
+    ...(Number.isFinite(e.cloudRevision)?{cloudRevision:e.cloudRevision,cloudAt:e.cloudAt}:{}),
+    ...(Number.isFinite(e.cloudConflict)?{cloudConflict:e.cloudConflict}:{}),
+    ...(e.cloudAck?{cloudAck:true}:{}),
+    ...(e.cloudSending?{cloudSending:true}:{}),
     exportedAt: Number.isFinite(e.exportedAt) ? e.exportedAt : null,
     ...(typeof e.exportBatch==='string'&&e.exportBatch?{exportBatch:e.exportBatch}:{}),
     ...(e.payload&&typeof e.payload==='object'&&!Array.isArray(e.payload)?{payload:JSON.parse(JSON.stringify(e.payload))}:{}),

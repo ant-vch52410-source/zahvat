@@ -2,6 +2,8 @@
 // Это чистая модель окружения, браузеры и реальные данные не используются.
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import {DriveExchange} from '../sync.js';
+import * as syncCore from '../sync-core.js';
 import {readFile} from 'node:fs/promises';
 const root=new URL('../',import.meta.url);
 const core=await import('data:text/javascript;base64,'+Buffer.from(await readFile(new URL('core.js',root),'utf8')).toString('base64'));
@@ -11,11 +13,11 @@ function model(share){
  const nodes=new Map();
  const node=()=>({value:'',textContent:'',disabled:false,hidden:true,querySelectorAll:()=>[],setAttribute(){},classList:{toggle(){}},close(){}});
  const settings={},writes=[],files=[];
- const context=vm.createContext({...core,console,File,Date,URL,setTimeout,clearTimeout,
+ const context=vm.createContext({...core,...syncCore,DriveExchange,console,File,Date,URL,setTimeout,clearTimeout,
   crypto:{randomUUID:()=> 'group-'+Math.random()},
   document:{getElementById:id=>{if(!nodes.has(id))nodes.set(id,node());return nodes.get(id);}},
   navigator:{canShare:()=>true,share:async args=>{files.push(args.files[0]);return share?.(args);}},
-  CaptureForm:class{},Dictation:class{},
+  PhonePlan:class{},CaptureForm:class{},Dictation:class{},
   db:{getSetting:async k=>settings[k],putState:async(entries,values)=>{writes.push({entries,values});Object.assign(settings,values);}},
  });
  vm.runInContext(source,context);

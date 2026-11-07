@@ -1,3 +1,4 @@
+// Обмен через Google Диск и один сценарий телефона (задача 36.3).
 // Атомарные отметки групп выгрузки и восстановление обмена (задачи 7, 36.2).
 // База «Захвата» в IndexedDB (задача 1): записи и настройки. Всё хранится только на телефоне.
 
@@ -60,6 +61,16 @@ export const putEntries = (list) => tx(['entries'], 'readwrite', t => {
 export const getSetting = (key) => tx(['settings'], 'readonly', t => t.objectStore('settings').get(key));
 export const setSetting = (key, value) => tx(['settings'], 'readwrite', t => t.objectStore('settings').put(value, key));
 
+/** Статусы и снимок вместе, без перезаписи параллельной правки (задача 36.3). */
+export const updateCloud = (changes, settings) => tx(['entries','settings'], 'readwrite', t => {
+  const store=t.objectStore('entries');
+  for(const change of changes){const req=store.get(change.id);req.onsuccess=()=>{
+    const current=req.result;if(!current||current.updatedAt!==change.revision)return;
+    const {revision,...fields}=change;store.put({...current,...fields});
+  };}
+  for(const [key,value] of Object.entries(settings))t.objectStore('settings').put(value,key);
+});
+
 /** Все настройки — для резервной копии: { имя: значение }. */
 export async function getAllSettings() {
   const out = {};
@@ -79,3 +90,17 @@ export const putState = (list, settings = {}) => tx(['entries','settings'], 'rea
   for(const e of list)entries.put(e);
   for(const [key,value] of Object.entries(settings))values.put(value,key);
 });
+
+/** Сохранение либо удаление с проверкой отправки в той же транзакции (задача 36.3). */
+function changeCapture(id,entry){
+  return openDb().then(db=>new Promise((resolve,reject)=>{
+    const t=db.transaction('entries','readwrite'),store=t.objectStore('entries');let blocked=false;
+    t.oncomplete=()=>resolve();t.onerror=()=>reject(t.error);t.onabort=()=>reject(blocked?new Error('Запись уже передана'):t.error);
+    const req=store.get(id);req.onsuccess=()=>{
+      const old=req.result;if(old&&(old.cloudRevision||old.cloudSending)){blocked=true;t.abort();return;}
+      if(entry)store.put(entry);else store.delete(id);
+    };
+  }));
+}
+export const saveCapture=e=>changeCapture(e.id,e);
+export const removeCapture=id=>changeCapture(id,null);
