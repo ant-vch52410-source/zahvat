@@ -18,7 +18,7 @@ import { Dictation } from './speech.js';
 import { CaptureForm, SECTIONS, recordKind, recordText } from './capture.js';
 
 /** Версия программы — показывается в меню; поднимается вместе с VERSION в sw.js. */
-const APP_VERSION = '9.4.1';
+const APP_VERSION = '9.5.0';
 const $ = (id) => document.getElementById(id);
 const ui = {
   text: $('text'), interim: $('interim'), mic: $('btnMic'), save: $('btnSave'), clear: $('btnClear'), status: $('status'),
@@ -47,7 +47,7 @@ const NOTE_TAG = 'Заметка';             // запись без выбра
 const KNOWN_TAGS = ['Финансы', 'Идеи', 'Мысли', 'Заметка', 'Идея', 'Задача', 'Время', 'Работа', RECEIPT_TAG];
 
 const drive=new DriveExchange(refreshDrive);
-const phonePlan=new PhonePlan(drive,()=>entries);
+const phonePlan=new PhonePlan(drive,()=>entries,{options:purchaseOptions,create:savePlanPurchase});
 let entries = [];          // все записи в памяти (их немного, так проще и быстрее)
 let draftVoice = false;    // в текущем тексте есть надиктованное → источник 'voice'
 let editingId = null;      // какую запись сейчас правим (в «Все записи»)
@@ -288,7 +288,20 @@ async function saveEntry() {
   saveDraftNow();   // черновик стираем только после удачной записи
   structuredEditing=null;entries=entries.filter(e=>e.id!==entry.id);entries.push(entry);
   render();
-  showToast('Сохранено');drive.schedule(true);
+  await phonePlan.refresh();showToast('Сохранено');drive.schedule(true);
+}
+
+/** Общие справочники покупки; счёт оплаты сохраняется, финансирование — общая подушка (36.3). */
+function purchaseOptions(){
+  const accounts=captureForm.catalog.accounts?.filter(a=>a.currency==='RUB').map(a=>a.name)||lists.accounts;
+  return {account:accounts.includes(account)?account:accounts.includes('Виза')?'Виза':accounts[0],
+    articles:captureForm.catalog.articles?.filter(a=>a.mode==='expense').map(a=>a.name)||lists.cats};
+}
+/** Создать запись ровно один раз; покупка и очистка её черновика фиксируются вместе (36.3). */
+async function savePlanPurchase(payload){
+  const now=Date.now(),entry={id:newId(),ts:now,createdAt:now,updatedAt:now,text:recordText(payload),payload,source:'text',exportedAt:null};
+  await db.putState([entry],{phonePurchaseDraft:null});entries.push(entry);render();drive.schedule(true);
+  return entry;
 }
 
 /** «Стереть»: очистить поле, сумму, статью и метку; можно вернуть из сообщения. */
@@ -1142,7 +1155,7 @@ function prepareOffline() {
   if(!('serviceWorker' in navigator))return;
   const hadOld=!!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{
-    if(hadOld&&!exportBusy&&!ui.text.value.trim()&&!amount&&!ui.interim.textContent.trim()&&!dictation.recording&&!Object.values(captureForm.values).some(Boolean)&&!document.querySelector('dialog[open]'))location.reload();
+    if(hadOld&&!exportBusy&&!ui.text.value.trim()&&!amount&&!ui.interim.textContent.trim()&&!dictation.recording&&!Object.values(captureForm.values).some(Boolean)&&!document.querySelector('dialog[open]')&&!Object.values(phonePlan.creation).some(Boolean))location.reload();
   });
   navigator.serviceWorker.register(new URL('./sw.js',import.meta.url),{updateViaCache:'none'})
     .then(()=>navigator.serviceWorker.ready).then(()=>{offlineReady=true;})

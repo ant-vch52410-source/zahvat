@@ -19,6 +19,13 @@ export function cents(value) {
   if (!Number.isSafeInteger(n) || n<=0 || n>1e14) throw new Error('Проверьте сумму.');
   return n;
 }
+/** Одинаковые проверенные поля покупки для «Записи» и формы внутри Плана (36.3). */
+export function purchasePayload({title,amount,day,account,article}) {
+  if(!title?.trim())throw new Error('Укажите название покупки.');
+  if(!account||!article)throw new Error('Выберите счёт и статью.');
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(day||'')||!parseDay(day.split('-').reverse().join('.')))throw new Error('Проверьте дату покупки.');
+  return {v:2,kind:'finance',planned:true,mode:'expense',text:title.trim(),amount:cents(amount),day,account,article};
+}
 const $ = id => document.getElementById(id);
 const h = (tag, text, attrs={}) => { const el=document.createElement(tag); if(text)el.textContent=text; for(const [k,v]of Object.entries(attrs))el.setAttribute(k,v); return el; };
 
@@ -124,7 +131,7 @@ export class CaptureForm {
   }
   payload(raw, amount, account, article) {
     this.readFields();const f=this.values;let kind={'Задача':'task','Заметка':'note','Идея':'idea','Время':'time','Работа':'work'}[this.tag]||'note';
-    if(!this.tag && this.planned && !amount)throw new Error('Укажите сумму покупки больше нуля.');
+    if(!this.tag && this.planned){const day=parseDay(this.date);return purchasePayload({title:raw,amount,day:day?isoDay(day):'',account,article});}
     if(!this.tag && amount){kind='finance';const day=parseDay(this.date);if(!day)throw new Error('Проверьте дату операции.');
       const p={v:1,kind,text:raw,day:isoDay(day),mode:this.mode,amount:cents(amount)};
       if(this.mode==='transfer'){p.account=f.from;p.to_account=f.to;if(!p.account||!p.to_account||p.account===p.to_account)throw new Error('Выберите разные счета перевода.');}
