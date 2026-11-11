@@ -332,3 +332,31 @@ fieldset input { width: 22px; height: 22px; }
 .pending-dot{font-size:10px;color:#b28245;flex:none}
 .legend .units{margin-left:auto;color:var(--muted);font-size:9px}.graph .legend span:nth-child(2){color:#b28245}
 .graph-value{font:9px system-ui;stroke:var(--card);stroke-width:3px;stroke-linejoin:round;paint-order:stroke fill}
+
+/* План телефона: график и отправка остаются видны при прокрутке покупок. */
+.home #phonePlanView {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+#phonePlanView > :not(#planPurchases) { flex: none; }
+#planPurchases { min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
+#phonePlanView .purchase { grid-template-columns: minmax(0, 1fr) auto 96px 24px 24px; }
+#phonePlanView .zero-line { stroke: var(--red); stroke-width: 1; stroke-dasharray: 4 3; stroke-linecap: butt; }
+.purchase .purchase-more { border-color: transparent; background: transparent; color: var(--muted); }
+.purchase .purchase-more[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
+.purchase-actions {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--card);
+  box-shadow: 0 3px 10px #0005;
+}
+.purchase-actions button { border: 0; color: var(--red); padding: 3px 9px; min-height: 28px; }
+.purchase-undo { flex: none; min-height: 24px; padding: 2px 5px; font-size: 11px; color: var(--accent); }
+#phonePlanView .footer { flex-wrap: wrap; }

@@ -81,7 +81,7 @@ export class PhonePlan{
   resetDraft(){
     const saved=new Map((this.packet?.choices||[]).map(r=>[r.id,r]));
     this.draft={base:this.packet?.version??null,dirty:false,choices:this.purchases.map(p=>{
-      const r=saved.get(p.id);return {id:p.id,version:p.version,day:r?.day??p.day??'',included:r?.included??p.included??!!p.day};
+      const r=saved.get(p.id);return {id:p.id,version:p.version,day:r?.day??p.day??'',included:r?.included??p.included??!!p.day,...(r?.removed&&r.version===p.version?{removed:true}:{})};
     })};
     db.setSetting('phoneScenario',structuredClone(this.draft));
   }
@@ -98,6 +98,7 @@ export class PhonePlan{
     // Сетевой ответ сохраняет незавершённый ввод и фокус в компактной форме.
     const focused=root.contains(document.activeElement)?document.activeElement.id:null;
     const selection=focused&&document.activeElement.selectionStart;
+    const scrollTop=document.getElementById('planPurchases')?.scrollTop||0;
     root.replaceChildren();
     if(this.packet){
       const totals=node('section','totals');
@@ -117,28 +118,73 @@ export class PhonePlan{
     section.append(node('h2','','Мой сценарий'),node('small','','1 сценарий · 3 месяца'),add);root.append(section);
     if(this.packet){const info=node('p','notice');info.id='planMinimum';root.append(info);}
     root.append(this.creationForm());
-    const list=node('div');list.id='planPurchases';
+    const list=node('div');list.id='planPurchases';list.tabIndex=0;
+    list.setAttribute('role','region');list.setAttribute('aria-label','Покупки сценария');
+    const popup=node('div','purchase-actions');popup.id='planPurchaseActions';popup.setAttribute('popover','auto');
+    const remove=node('button','','Удалить');remove.type='button';remove.autofocus=true;popup.append(remove);
+    list.addEventListener('scroll',()=>{if(popup.matches(':popover-open'))popup.hidePopover();});
     for(const p of this.purchases){
       const c=this.draft.choices.find(c=>c.id===p.id);
+      if(c.removed&&c.version===p.version)continue;
       const row=node('article','purchase'),title=node('strong','',p.title),amount=node('span','',money(p.amount));title.title=p.title;amount.title='Из общей подушки';
       let name=title;
       if(p.pending){name=node('span','purchase-name');const dot=node('span','pending-dot','●');dot.title=p.error||'Ждёт ПК';dot.setAttribute('aria-label',dot.title);name.append(dot,title);row.title=p.error||'Ждёт ПК';}
       const date=node('input');date.type='date';date.value=c.day;
       date.min=isoDay(new Date(Date.now()+86400000));if(this.packet)date.max=p.deadline&&p.deadline<this.packet.end?p.deadline:this.packet.end;
-      date.disabled=!!p.pinned;date.setAttribute('aria-label','Дата: '+p.title);date.onchange=()=>{this.changed(p,c,{day:date.value});};
+      date.disabled=!!p.pinned;date.setAttribute('aria-label','Дата: '+p.title);date.onchange=()=>{this.changed(p,c,{day:date.value,removed:false});};
       const approve=node('button');approve.type='button';approve.disabled=!!p.pinned;
       const buttonState=()=>{approve.textContent=c.included?'✓':'＋';approve.setAttribute('aria-pressed',c.included);approve.setAttribute('aria-label',(c.included?'Убрать из сценария: ':'Утвердить: ')+p.title);approve.title=c.included?'Убрать из сценария':'Утвердить: включить в сценарий';};
-      buttonState();approve.onclick=()=>{if(!c.day){date.focus();document.getElementById('planStatus').textContent='Сначала задайте дату';return;}this.changed(p,c,{included:!c.included});buttonState();};
+      buttonState();approve.onclick=()=>{if(!c.day){date.focus();document.getElementById('planStatus').textContent='Сначала задайте дату';return;}this.changed(p,c,{included:!c.included,removed:false});buttonState();};
       if(c.version!==p.version){row.classList.add('stale');row.title='Покупка изменилась на ПК. Проверьте дату и включение.';}
-      row.append(name,amount,date,approve);list.append(row);
+      const actions=node('button','purchase-more','⋯');actions.type='button';actions.id='planPurchaseMore-'+p.id;
+      actions.setAttribute('aria-label','Действия: '+p.title);actions.setAttribute('aria-controls',popup.id);
+      actions.setAttribute('aria-expanded','false');actions.disabled=!!p.pinned;
+      if(p.pinned)actions.title='Дата покупки закреплена на компьютере';
+      actions.onclick=()=>{
+        if(popup.matches(':popover-open')){
+          const sameTrigger=actions.getAttribute('aria-expanded')==='true';
+          popup.hidePopover();
+          if(sameTrigger)return;
+        }
+        popup.onbeforetoggle=event=>{if(event.newState==='closed')actions.setAttribute('aria-expanded','false');};
+        remove.onclick=()=>{
+          popup.hidePopover();
+          this.removedPurchase={id:p.id,captureId:p.captureId,choice:{...c}};
+          this.changed(p,c,{included:false,removed:true});
+          this.render();
+          document.getElementById('planUndoRemoval').focus();
+        };
+        popup.showPopover({source:actions});
+        const anchor=actions.getBoundingClientRect();
+        const below=anchor.bottom+4,above=anchor.top-popup.offsetHeight-4;
+        popup.style.top=Math.max(4,below+popup.offsetHeight<=list.getBoundingClientRect().bottom?below:above)+'px';
+        popup.style.left=Math.max(4,anchor.right-popup.offsetWidth)+'px';
+        actions.setAttribute('aria-expanded','true');
+      };
+      row.append(name,amount,date,approve,actions);list.append(row);
     }
-    if(!this.purchases.length)list.append(node('p','notice','Неоплаченных плановых покупок нет.'));root.append(list);
+    if(!list.childElementCount)list.append(node('p','notice','Неоплаченных плановых покупок нет.'));
+    root.append(list,popup);list.scrollTop=scrollTop;
     const pending=this.purchases.filter(p=>p.pending);if(pending.length)root.append(node('p','notice pending-count',`● Ждёт ПК: ${pending.length}`));
     if(pending.some(p=>p.error))root.append(node('p','error',pending.find(p=>p.error).error));
     const footer=node('div','footer'),send=node('button','save send-icon');send.id='planSend';send.type='button';send.title='Передать сценарий на компьютер';send.setAttribute('aria-label',send.title);
     send.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V3m-5 5 5-5 5 5M4 15v6h16v-6"/></svg>';send.onclick=()=>this.submit();
-    const reset=node('button','reset-icon','↶');reset.type='button';reset.title='Получить сценарий компьютера, отменив местные правки';reset.setAttribute('aria-label',reset.title);reset.onclick=()=>{this.resetDraft();this.render();};
+    const reset=node('button','reset-icon','↶');reset.type='button';reset.title='Получить сценарий компьютера, отменив местные правки';reset.setAttribute('aria-label',reset.title);reset.onclick=()=>{this.removedPurchase=null;this.resetDraft();this.render();};
     const status=node('span');status.id='planStatus';footer.append(send,reset,status);root.append(footer,node('p','notice','Утверждение включает покупку в сценарий. Деньги не списываются.'));
+    const undo=this.removedPurchase;
+    const purchase=undo&&this.purchases.find(p=>p.id===undo.id||(undo.captureId&&p.captureId===undo.captureId));
+    const choice=purchase&&this.draft.choices.find(c=>c.id===purchase.id);
+    if(choice?.removed&&!purchase.pinned){
+      const undoButton=node('button','purchase-undo','Отменить удаление');undoButton.type='button';undoButton.id='planUndoRemoval';
+      undoButton.onclick=()=>{
+        this.removedPurchase=null;
+        const {day,included}=undo.choice;
+        this.changed(purchase,choice,{day,included,removed:false});
+        this.render();
+        document.getElementById('planPurchaseMore-'+purchase.id)?.focus();
+      };
+      footer.append(undoButton);
+    }
     this.renderChart();this.renderStatus();
     if(focused){const el=document.getElementById(focused);if(el){el.focus();if(typeof selection==='number'&&el.type==='text')el.setSelectionRange(selection,selection);}}
   }
@@ -171,7 +217,7 @@ export class PhonePlan{
     const curve=projectScenario({...this.packet,purchases:this.purchases},this.draft.choices,day=>this.offset(day));if(!curve.length)return;
     const all=curve.flatMap(r=>[r.free,r.cushion]),min=Math.min(0,...all),max=Math.max(100,...all),y=v=>84-(v-min)/(max-min)*76;
     const points=key=>curve.map((p,i)=>`${i/Math.max(1,curve.length-1)*320},${y(p[key])}`).join(' ');
-    svg.innerHTML=`<path d="M0 ${y(0)}H320" stroke="var(--line)"/><polyline points="${points('free')}" fill="none" stroke="var(--accent)" stroke-width="2"/><polyline points="${points('cushion')}" fill="none" stroke="#b28245" stroke-width="2"/>`;
+    svg.innerHTML=`<path d="M0 ${y(0)}H320" class="zero-line"/><polyline points="${points('free')}" fill="none" stroke="var(--accent)" stroke-width="2"/><polyline points="${points('cushion')}" fill="none" stroke="#b28245" stroke-width="2"/>`;
     for(const point of graphSamples(curve))for(const [key,other,color] of [['free','cushion','var(--accent)'],['cushion','free','#b28245']]){
       const text=document.createElementNS('http://www.w3.org/2000/svg','text');text.classList.add('graph-value');text.setAttribute('x',[2,160,318][point.position]);text.setAttribute('y',Math.max(9,Math.min(86,y(point[key])+(point[key]>=point[other]?-5:11))));text.setAttribute('text-anchor',['start','middle','end'][point.position]);text.setAttribute('fill',color);text.textContent=(point[key]/100000).toLocaleString('ru-RU',{maximumFractionDigits:1});svg.append(text);
     }
