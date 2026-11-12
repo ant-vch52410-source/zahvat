@@ -91,7 +91,7 @@ export const putState = (list, settings = {}) => tx(['entries','settings'], 'rea
   for(const [key,value] of Object.entries(settings))values.put(value,key);
 });
 
-const pendingPurchaseFact=row=>row.payload?.v===4&&row.payload.purchase&&!['received','rejected'].includes(row.delivery);
+const pendingPurchaseFact=row=>[4,5].includes(row.payload?.v)&&row.payload.purchase&&!['received','rejected'].includes(row.delivery);
 
 /** Связать расход с текущей записью и исключить параллельные отправки из двух вкладок. */
 export async function savePurchaseFact(entry, origin){

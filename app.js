@@ -18,7 +18,7 @@ import { Dictation } from './speech.js';
 import { CaptureForm, SECTIONS, recordKind, recordText } from './capture.js';
 
 /** Версия программы — показывается в меню; поднимается вместе с VERSION в sw.js. */
-const APP_VERSION = '9.5.2';
+const APP_VERSION = '9.5.3';
 const $ = (id) => document.getElementById(id);
 const ui = {
   text: $('text'), interim: $('interim'), mic: $('btnMic'), save: $('btnSave'), clear: $('btnClear'), status: $('status'),
@@ -445,7 +445,9 @@ function entryItem(e) {
   if(kind==='receipt')title.append(entryText(e));
   else title.textContent=p?.kind==='finance'?(p.planned||purchaseFact?p.text:p.mode==='transfer'?p.account+' → '+p.to_account:p.article)+(money?' · '+money:''):(p?.text||splitTag(e.text,KNOWN_TAGS).rest||e.text);
   const meta=document.createElement('span');meta.className='meta';
-  const detail=p?.kind==='finance'?[p.planned?'План':p.account,{expense:'Расход',income:'Доход',transfer:'Перевод'}[p.mode]]:[p?.client?.name,p?.project?.name,p?.folder?.name];
+  const applied=purchaseFact&&drive.state.snapshot?.balances?.applied?.find(row=>row.id===e.id&&row.revision===e.updatedAt);
+  const accountName=applied?.account||p?.account||(purchaseFact?'Накопительный счёт':'');
+  const detail=p?.kind==='finance'?[p.planned?'План':accountName,{expense:'Расход',income:'Доход',transfer:'Перевод'}[p.mode]]:[p?.client?.name,p?.project?.name,p?.folder?.name];
   meta.textContent=[...detail,({received:'Принято на ПК',waiting:'Требует внимания',rejected:'Отклонено ПК'}[e.delivery]||(e.cloudRevision?'На Диске · ждёт ПК':e.cloudSending?'Ожидает подтверждения Диска':e.exportedAt?'Выгружено':'Новое'))].filter(Boolean).join(' · ');if(e.deliveryError)meta.title=e.deliveryError;
   const time=document.createElement('span');time.className='time';time.textContent=formatTime(e.ts);time.title=formatLocal(e.ts);
   txt.append(title,meta);b.append(src,txt,time);li.append(b);return li;

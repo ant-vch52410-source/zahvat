@@ -160,9 +160,10 @@ export class CaptureForm {
 export function recordKind(e){if(e.payload)return e.payload.kind;const head=e.text.split(':')[0].toLocaleLowerCase();return ({'финансы':'finance','задача':'task','заметка':'note','мысли':'note','идея':'idea','идеи':'idea','время':'time','работа':'work','чек':'receipt'})[head]||'note';}
 export function recordText(p){
   const tag={finance:'Финансы',task:'Задача',note:'Заметка',idea:'Идея',time:'Время',work:'Работа'}[p.kind];
-  if(p.kind==='finance'&&p.v===4){
+  if(p.kind==='finance'&&[4,5].includes(p.v)){
     const amount=(p.amount/100).toLocaleString('ru-RU',{minimumFractionDigits:p.amount%100?2:0,maximumFractionDigits:2});
-    return `${tag}: Расход · ${p.text} · ${amount} ₽ · ${p.day} · Из подушки`;
+    const funding=p.v===5?'С накопительного счёта':'Из подушки';
+    return `${tag}: Расход · ${p.text} · ${amount} ₽ · ${p.day} · ${funding}`;
   }
   if(p.kind==='finance'&&p.planned===true)return `Финансы: План · ${p.text} · ${(p.amount/100).toLocaleString('ru-RU')} ₽ · ${p.article} · ${p.day} · Из подушки`;
   if(p.kind==='finance')return `${tag}: ${p.mode==='transfer'?p.account+' → '+p.to_account:p.account+' · '+p.article} · ${(p.amount/100).toLocaleString('ru-RU')} ₽${p.text?' · '+p.text:''} · ${p.day}`;

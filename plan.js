@@ -9,7 +9,7 @@ const localId=id=>'capture:'+id;
 const defaultChoice=p=>({id:p.id,version:p.version,day:p.day||'',included:p.included??!!p.day});
 
 /** Сумма факта заменяет плановую; версия связывает подтверждение с конкретной покупкой. */
-export function purchaseFactPayload(purchase,raw,day=isoDay()){
+export function purchaseFactPayload(purchase,raw,day=isoDay(),account=''){
   const input=raw.trim();
   if(!/^(?:\d+|\d{1,3}(?:[ \u00a0\u202f]\d{3})+)(?:[,.]\d{1,2})?$/.test(input))
     throw new Error('Укажите сумму больше нуля, до двух знаков после запятой.');
@@ -17,7 +17,7 @@ export function purchaseFactPayload(purchase,raw,day=isoDay()){
   const target=purchase.pending
     ?{captureId:purchase.captureId,captureRevision:purchase.captureRevision}
     :{id:purchase.id,version:purchase.version};
-  return {v:4,kind:'finance',mode:'expense',text:purchase.title,account:purchase.account,amount,day,purchase:target};
+  return {v:5,kind:'finance',mode:'expense',text:purchase.title,account,amount,day,purchase:target};
 }
 
 const captureKey=(id,revision)=>localId(id)+':'+revision;
@@ -156,8 +156,8 @@ export class PhonePlan{
     const purchase=this.factPurchase;
     const latest=this.purchases.find(p=>p.id===purchase.id&&p.version===purchase.version);
     try{
-      if(!latest||latest.factPending||latest.eligible===false)throw new Error('Покупка изменилась. Откройте её заново.');
-      const payload=purchaseFactPayload(purchase,this.factAmount.value);
+      if(!latest||latest.factPending)throw new Error('Покупка изменилась. Откройте её заново.');
+      const payload=purchaseFactPayload(purchase,this.factAmount.value,isoDay(),this.packet?.purchaseFactAccount||'');
       this.factSave.disabled=this.factCancel.disabled=true;
       await this.actions.record(payload,purchase);
     }catch(error){
@@ -214,7 +214,7 @@ export class PhonePlan{
       if(c.version!==p.version){row.classList.add('stale');row.title='Покупка изменилась на ПК. Проверьте дату и включение.';}
       const actions=node('button','purchase-more','⋯');actions.type='button';actions.id='planPurchaseMore-'+p.id;
       actions.setAttribute('aria-label','Действия: '+p.title);actions.setAttribute('aria-controls',popup.id);
-      actions.setAttribute('aria-expanded','false');actions.disabled=!!p.factPending||(!!p.pinned&&p.eligible===false);
+      actions.setAttribute('aria-expanded','false');actions.disabled=!!p.factPending;
       if(p.factPending)actions.title='Расход ждёт ПК';
       actions.onclick=()=>{
         if(popup.matches(':popover-open')){
@@ -223,8 +223,6 @@ export class PhonePlan{
           if(sameTrigger)return;
         }
         popup.onbeforetoggle=event=>{if(event.newState==='closed')actions.setAttribute('aria-expanded','false');};
-        record.disabled=p.eligible===false;
-        record.title=record.disabled?'На ПК нужен действующий рублёвый счёт в прогнозе':'';
         remove.disabled=!!p.pinned;
         record.onclick=()=>{popup.hidePopover();this.openFact(p);};
         remove.onclick=()=>{

@@ -1,6 +1,6 @@
 // Доставка и телефонные остатки без двойного списания (задача 36.3).
 export const isFinancial=e=>e.payload?e.payload.kind==='finance':/^(Финансы|Чек):/i.test(e.text);
-export const isPurchaseFact=e=>e.payload?.kind==='finance'&&e.payload.v===4;
+export const isPurchaseFact=e=>e.payload?.kind==='finance'&&[4,5].includes(e.payload.v);
 export const isLocked=e=>!!(e.exportedAt||e.cloudRevision||e.cloudSending);
 export function connection(v){
   if(v?.app!=='zahvat-drive'||v.v!==1||v.role!=='phone'||!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(v.url)||typeof v.key!=='string'||v.key.length<64||v.key.length>200)
