@@ -1,6 +1,7 @@
 // Событийный обмен при сохранении, возврате и восстановлении связи (задача 36.3).
 import * as db from './db.js';
 import {connection,isFinancial,wireRecord,mergeResult} from './sync-core.js';
+const needsUpload=e=>isFinancial(e)&&e.cloudRevision!==e.updatedAt&&e.cloudConflict!==e.updatedAt&&!['received','rejected'].includes(e.delivery);
 export class DriveExchange{
   constructor(changed){this.changed=changed;this.busy=false;this.again=false;this.timer=0;this.config=null;this.last=0;this.failures=0;this.state={};}
   async init(){
@@ -18,7 +19,7 @@ export class DriveExchange{
     if(this.busy||!this.config||!navigator.onLine)return;this.busy=true;this.again=false;this.changed();const config=this.config;
     try{
       const entries=await db.getAllEntries(),command=await db.getSetting('phonePlanCommand');
-      let pending=entries.filter(e=>isFinancial(e)&&e.cloudRevision!==e.updatedAt&&e.cloudConflict!==e.updatedAt&&e.delivery!=='received').slice(0,command?99:100);
+      let pending=entries.filter(needsUpload).slice(0,command?99:100);
       if(command&&command.cloudRevision!==command.updatedAt&&!['received','rejected'].includes(command.delivery))pending.push(command);
       // Запрос ограничен 180 КБ текста, включая подтверждения.
       let used=1000;pending=pending.filter(e=>{const size=JSON.stringify(wireRecord(e)).length;if(used+size>170000)return false;used+=size;return true;});
@@ -40,7 +41,7 @@ export class DriveExchange{
       if(command){const updated=mergeResult([command],response,at)[0];const latest=await db.getSetting('phonePlanCommand');if(latest?.id===command.id)settings.phonePlanCommand=updated;}
       if(response.snapshot?.catalog){const c=response.snapshot.catalog;settings.captureCatalog={...c,app:'zahvat-catalog',v:1};
         settings.finLists={accounts:c.accounts.filter(a=>a.currency==='RUB').map(a=>a.name),cats:c.articles.filter(a=>a.mode==='expense').map(a=>a.name),loadedAt:at};}
-      await db.updateCloud(changes,settings);this.last=at;this.failures=0;this.again=this.again||!!(settings.phonePlanCommand&&!settings.phonePlanCommand.cloudRevision&&!settings.phonePlanCommand.cloudConflict&&!['received','rejected'].includes(settings.phonePlanCommand.delivery))||merged.some(e=>isFinancial(e)&&e.cloudRevision!==e.updatedAt&&e.cloudConflict!==e.updatedAt&&e.delivery!=='received');
+      await db.updateCloud(changes,settings);this.last=at;this.failures=0;this.again=this.again||!!(settings.phonePlanCommand&&!settings.phonePlanCommand.cloudRevision&&!settings.phonePlanCommand.cloudConflict&&!['received','rejected'].includes(settings.phonePlanCommand.delivery))||merged.some(needsUpload);
     }catch(error){
       this.failures++;this.state={...this.state,error:'Нет подтверждения обмена. Записи сохранены; повтор при открытии или появлении связи.'};await db.setSetting('driveState',this.state);
       if(this.failures<=2&&!document.hidden)this.timer=setTimeout(()=>{if(!document.hidden)this.run();},this.failures===1?60000:300000);

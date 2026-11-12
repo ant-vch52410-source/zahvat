@@ -1,12 +1,36 @@
 // План телефона: обе формы, локальные покупки и склейка с квитанциями ПК (задача 36.3).
 import * as db from './db.js';
-import {adjustedBalances} from './sync-core.js';
-import {purchasePayload,isoDay} from './capture.js';
-const money=n=>(n/100).toLocaleString('ru-RU',{maximumFractionDigits:2})+' ₽';
+import {adjustedBalances,isPurchaseFact} from './sync-core.js';
+import {cents,purchasePayload,isoDay} from './capture.js';
+const money=n=>(n/100).toLocaleString('ru-RU',{minimumFractionDigits:n%100?2:0,maximumFractionDigits:2})+' ₽';
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const node=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;};
 const localId=id=>'capture:'+id;
 const defaultChoice=p=>({id:p.id,version:p.version,day:p.day||'',included:p.included??!!p.day});
+
+/** Сумма факта заменяет плановую; версия связывает подтверждение с конкретной покупкой. */
+export function purchaseFactPayload(purchase,raw,day=isoDay()){
+  const input=raw.trim();
+  if(!/^(?:\d+|\d{1,3}(?:[ \u00a0\u202f]\d{3})+)(?:[,.]\d{1,2})?$/.test(input))
+    throw new Error('Укажите сумму больше нуля, до двух знаков после запятой.');
+  const amount=cents(input.replace(/[ \u00a0\u202f]/g,''));
+  const target=purchase.pending
+    ?{captureId:purchase.captureId,captureRevision:purchase.captureRevision}
+    :{id:purchase.id,version:purchase.version};
+  return {v:4,kind:'finance',mode:'expense',text:purchase.title,account:purchase.account,amount,day,purchase:target};
+}
+
+const captureKey=(id,revision)=>localId(id)+':'+revision;
+const factKey=target=>target.id??captureKey(target.captureId,target.captureRevision);
+
+function decoratePurchase(purchase,facts,applied){
+  const fact=facts.get(purchase.id)||facts.get(captureKey(purchase.captureId,purchase.captureRevision));
+  if(!fact)return purchase;
+  // При свежем снимке строка может вернуться после отмены расхода на ПК.
+  if(applied.get(fact.id)===fact.updatedAt)return purchase.pending?null:purchase;
+  if(fact.delivery==='received')return null;
+  return {...purchase,factPending:fact.delivery!=='rejected',factError:fact.deliveryError||''};
+}
 
 /** Учитывать локальную запись ровно до соответствующего снимка ПК, независимо от задержки квитанции. */
 export function mergedPurchases(packet,entries,balances){
@@ -17,14 +41,20 @@ export function mergedPurchases(packet,entries,balances){
     const p=e.payload;if(p?.kind!=='finance'||p.planned!==true)continue;
     if(origins.has(e.id+':'+e.updatedAt)||applied.get(e.id)===e.updatedAt)continue;
     rows.push({id:localId(e.id),version:e.updatedAt,captureId:e.id,captureRevision:e.updatedAt,
-      title:p.text,amount:p.amount,day:p.day,included:true,eligible:true,pending:true,
+      title:p.text,account:p.account,amount:p.amount,day:p.day,included:true,eligible:true,pending:true,
       error:e.deliveryError||'',delivery:e.delivery});
   }
-  return rows;
+  const facts=new Map();
+  for(const entry of entries){
+    if(!isPurchaseFact(entry)||!entry.payload.purchase)continue;
+    const key=factKey(entry.payload.purchase);
+    if(!facts.has(key)||facts.get(key).updatedAt<entry.updatedAt)facts.set(key,entry);
+  }
+  return rows.map(p=>decoratePurchase(p,facts,applied)).filter(Boolean);
 }
 
 /** Перенести местные решения с capture-id на id покупки ПК, не маскируя чужие правки. */
-export function reconcileChoices(purchases,choices=[]){
+export function reconcileChoices(purchases,choices=[],paidIds=new Set()){
   const previous=new Map(choices.map(c=>[c.id,c]));
   const result=purchases.map(p=>{
     const c=previous.get(p.id);
@@ -34,7 +64,7 @@ export function reconcileChoices(purchases,choices=[]){
     return defaultChoice(p);
   });
   // Пропавшая покупка ПК требует проверки; удалённая местная запись исчезает сразу.
-  for(const c of choices)if(typeof c.id==='number'&&!purchases.some(p=>p.id===c.id))result.push({...c});
+  for(const c of choices)if(typeof c.id==='number'&&!paidIds.has(c.id)&&!purchases.some(p=>p.id===c.id))result.push({...c});
   return result;
 }
 
@@ -60,6 +90,19 @@ export class PhonePlan{
   constructor(drive,entries,actions={}){
     this.drive=drive;this.entries=entries;this.actions=actions;this.packet=null;this.purchases=[];
     this.draft=null;this.command=null;this.creation={};this.formOpen=false;this.saving=false;this.error='';
+    this.factDialog=document.getElementById('planFactDialog');
+    this.factAmount=document.getElementById('planFactAmount');
+    this.factError=document.getElementById('planFactError');
+    this.factSave=document.getElementById('planFactSave');
+    this.factCancel=document.getElementById('planFactCancel');
+    this.factCancel.onclick=()=>this.factDialog.close();
+    this.factDialog.addEventListener('cancel',event=>{if(this.factSave.disabled)event.preventDefault();});
+    this.factDialog.addEventListener('close',()=>{
+      const trigger=document.getElementById('planPurchaseMore-'+this.factPurchase?.id);
+      (trigger||document.getElementById('planAdd'))?.focus();
+    });
+    this.factAmount.oninput=()=>this.showFactError();
+    document.getElementById('planFactForm').onsubmit=event=>{event.preventDefault();this.submitFact();};
   }
   async init(){this.draft=await db.getSetting('phoneScenario')||null;this.creation=await db.getSetting('phonePurchaseDraft')||{};this.formOpen=!!Object.values(this.creation).some(Boolean);await this.refresh();}
   async refresh(){
@@ -71,7 +114,9 @@ export class PhonePlan{
         const unchanged=same(this.draft.choices,this.command.payload.choices);
         this.draft.base=this.packet.version;this.draft.dirty=!unchanged;if(unchanged)this.resetDraft();
       }
-      this.draft.choices=reconcileChoices(this.purchases,this.draft.choices);
+      const paidIds=new Set((this.drive.state.snapshot?.balances?.applied||[]).map(r=>r.purchaseId).filter(Number.isSafeInteger));
+      for(const entry of this.entries())if(isPurchaseFact(entry)&&entry.delivery==='received'&&entry.payload.purchase?.id)paidIds.add(entry.payload.purchase.id);
+      this.draft.choices=reconcileChoices(this.purchases,this.draft.choices,paidIds);
       // Первый снимок после работы без связи становится базой, не стирая местных решений.
       if(this.draft.base===null&&this.packet)this.draft.base=this.packet.version;
       await db.setSetting('phoneScenario',structuredClone(this.draft));
@@ -92,6 +137,36 @@ export class PhonePlan{
   changed(p,choice,fields){
     Object.assign(choice,fields,{version:p.version});this.draft.dirty=true;
     db.setSetting('phoneScenario',structuredClone(this.draft));this.renderChart();this.renderStatus();
+  }
+  showFactError(message=''){
+    this.factError.textContent=message;
+    this.factError.hidden=!message;
+    this.factAmount.setAttribute('aria-invalid',String(!!message));
+  }
+  openFact(purchase){
+    this.factPurchase=purchase;
+    document.getElementById('planFactTitle').textContent=purchase.title;
+    this.factAmount.value=money(purchase.amount).slice(0,-2);
+    this.showFactError();
+    this.factDialog.showModal();
+    this.factAmount.select();
+  }
+  async submitFact(){
+    if(this.factSave.disabled)return;
+    const purchase=this.factPurchase;
+    const latest=this.purchases.find(p=>p.id===purchase.id&&p.version===purchase.version);
+    try{
+      if(!latest||latest.factPending||latest.eligible===false)throw new Error('Покупка изменилась. Откройте её заново.');
+      const payload=purchaseFactPayload(purchase,this.factAmount.value);
+      this.factSave.disabled=this.factCancel.disabled=true;
+      await this.actions.record(payload,purchase);
+    }catch(error){
+      this.showFactError(error.message);
+      this.factAmount.focus();
+      return;
+    }finally{this.factSave.disabled=this.factCancel.disabled=false;}
+    this.factDialog.close();
+    await this.refresh();
   }
   render(){
     const root=document.getElementById('phonePlanView');if(!root)return;
@@ -121,14 +196,15 @@ export class PhonePlan{
     const list=node('div');list.id='planPurchases';list.tabIndex=0;
     list.setAttribute('role','region');list.setAttribute('aria-label','Покупки сценария');
     const popup=node('div','purchase-actions');popup.id='planPurchaseActions';popup.setAttribute('popover','auto');
-    const remove=node('button','','Удалить');remove.type='button';remove.autofocus=true;popup.append(remove);
+    const record=node('button','','В факт…');record.type='button';record.autofocus=true;
+    const remove=node('button','purchase-remove','Удалить');remove.type='button';popup.append(record,remove);
     list.addEventListener('scroll',()=>{if(popup.matches(':popover-open'))popup.hidePopover();});
     for(const p of this.purchases){
       const c=this.draft.choices.find(c=>c.id===p.id);
       if(c.removed&&c.version===p.version)continue;
       const row=node('article','purchase'),title=node('strong','',p.title),amount=node('span','',money(p.amount));title.title=p.title;amount.title='Из общей подушки';
       let name=title;
-      if(p.pending){name=node('span','purchase-name');const dot=node('span','pending-dot','●');dot.title=p.error||'Ждёт ПК';dot.setAttribute('aria-label',dot.title);name.append(dot,title);row.title=p.error||'Ждёт ПК';}
+      if(p.pending||p.factPending){name=node('span','purchase-name');const dot=node('span','pending-dot','●');dot.title=p.factPending?'Расход ждёт ПК':'Ждёт ПК';dot.setAttribute('aria-label',dot.title);name.append(dot,title);row.title=p.factError||p.error||dot.title;}
       const date=node('input');date.type='date';date.value=c.day;
       date.min=isoDay(new Date(Date.now()+86400000));if(this.packet)date.max=p.deadline&&p.deadline<this.packet.end?p.deadline:this.packet.end;
       date.disabled=!!p.pinned;date.setAttribute('aria-label','Дата: '+p.title);date.onchange=()=>{this.changed(p,c,{day:date.value,removed:false});};
@@ -138,8 +214,8 @@ export class PhonePlan{
       if(c.version!==p.version){row.classList.add('stale');row.title='Покупка изменилась на ПК. Проверьте дату и включение.';}
       const actions=node('button','purchase-more','⋯');actions.type='button';actions.id='planPurchaseMore-'+p.id;
       actions.setAttribute('aria-label','Действия: '+p.title);actions.setAttribute('aria-controls',popup.id);
-      actions.setAttribute('aria-expanded','false');actions.disabled=!!p.pinned;
-      if(p.pinned)actions.title='Дата покупки закреплена на компьютере';
+      actions.setAttribute('aria-expanded','false');actions.disabled=!!p.factPending||(!!p.pinned&&p.eligible===false);
+      if(p.factPending)actions.title='Расход ждёт ПК';
       actions.onclick=()=>{
         if(popup.matches(':popover-open')){
           const sameTrigger=actions.getAttribute('aria-expanded')==='true';
@@ -147,6 +223,10 @@ export class PhonePlan{
           if(sameTrigger)return;
         }
         popup.onbeforetoggle=event=>{if(event.newState==='closed')actions.setAttribute('aria-expanded','false');};
+        record.disabled=p.eligible===false;
+        record.title=record.disabled?'На ПК нужен действующий рублёвый счёт в прогнозе':'';
+        remove.disabled=!!p.pinned;
+        record.onclick=()=>{popup.hidePopover();this.openFact(p);};
         remove.onclick=()=>{
           popup.hidePopover();
           this.removedPurchase={id:p.id,captureId:p.captureId,choice:{...c}};
@@ -167,6 +247,10 @@ export class PhonePlan{
     root.append(list,popup);list.scrollTop=scrollTop;
     const pending=this.purchases.filter(p=>p.pending);if(pending.length)root.append(node('p','notice pending-count',`● Ждёт ПК: ${pending.length}`));
     if(pending.some(p=>p.error))root.append(node('p','error',pending.find(p=>p.error).error));
+    const factPending=this.purchases.filter(p=>p.factPending);
+    if(factPending.length)root.append(node('p','notice pending-count',`● Расход ждёт ПК: ${factPending.length}`));
+    const factError=this.purchases.find(p=>p.factError)?.factError;
+    if(factError)root.append(node('p','error',factError));
     const footer=node('div','footer'),send=node('button','save send-icon');send.id='planSend';send.type='button';send.title='Передать сценарий на компьютер';send.setAttribute('aria-label',send.title);
     send.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V3m-5 5 5-5 5 5M4 15v6h16v-6"/></svg>';send.onclick=()=>this.submit();
     const reset=node('button','reset-icon','↶');reset.type='button';reset.title='Получить сценарий компьютера, отменив местные правки';reset.setAttribute('aria-label',reset.title);reset.onclick=()=>{this.removedPurchase=null;this.resetDraft();this.render();};

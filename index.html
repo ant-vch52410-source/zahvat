@@ -137,6 +137,14 @@
   <input id="fileLists" type="file" accept=".txt,.json,text/plain,application/json" hidden>
   <input id="filePhoto" type="file" accept="image/*" capture="environment" hidden>
   <input id="fileGallery" type="file" accept="image/*" hidden>
+<dialog id="planFactDialog" aria-labelledby="planFactHeading" aria-describedby="planFactDetails">
+  <form id="planFactForm" novalidate>
+    <div class="fact-head"><h2 id="planFactHeading">Записать факт</h2><button id="planFactCancel" type="button" aria-label="Отмена" title="Отмена">×</button></div>
+    <p class="fact-details" id="planFactDetails"><strong id="planFactTitle"></strong><small>Сегодня · из подушки</small></p>
+    <div class="fact-fields"><label>Сумма, ₽<input id="planFactAmount" name="amount" inputmode="decimal" autocomplete="off" maxlength="22" aria-describedby="planFactError" autofocus></label><button id="planFactSave" class="save" type="submit">Записать расход</button></div>
+    <p id="planFactError" class="error purchase-error" role="alert" hidden></p>
+  </form>
+</dialog>
 <dialog id="driveDlg" aria-labelledby="driveTitle"><h2 id="driveTitle">Google Диск</h2>
 <p id="driveInfo" class="hint" role="status"></p><p class="hint">Финансовые записи отправляются при сохранении и открытии приложения. Остатки приходят с компьютера. Без сети всё остаётся на телефоне.</p>
 <div class="dlg-actions"><button id="driveConnect" type="button" class="save">Подключить файл</button><button id="driveNow" type="button">Обновить</button><button id="driveDisconnect" type="button">Отключить</button><button id="driveClose" type="button" class="ghost">Закрыть</button></div></dialog>

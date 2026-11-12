@@ -1,5 +1,6 @@
 // Доставка и телефонные остатки без двойного списания (задача 36.3).
 export const isFinancial=e=>e.payload?e.payload.kind==='finance':/^(Финансы|Чек):/i.test(e.text);
+export const isPurchaseFact=e=>e.payload?.kind==='finance'&&e.payload.v===4;
 export const isLocked=e=>!!(e.exportedAt||e.cloudRevision||e.cloudSending);
 export function connection(v){
   if(v?.app!=='zahvat-drive'||v.v!==1||v.role!=='phone'||!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(v.url)||typeof v.key!=='string'||v.key.length<64||v.key.length>200)
@@ -19,7 +20,8 @@ export function adjustedBalances(snapshot,entries,today){
   for(const e of entries){
     const p=e.payload;if(!isFinancial(e)||applied.get(e.id)===e.updatedAt||legacy.has(e.id))continue;
     if(!p){for(const a of rows)a.uncertain++;continue;}
-    if(p.planned||p.day>today)continue;
+    // Факт покупки меняет и остаток, и защиту нескольких счетов. Ждём их общего снимка ПК.
+    if(p.planned||isPurchaseFact(e)||p.day>today)continue;
     const a=byName.get(p.account),to=byName.get(p.to_account);
     if(!Number.isSafeInteger(p.amount)||p.amount<=0||!a){for(const row of rows)row.uncertain++;continue;}
     if(p.mode==='expense')a.pending-=p.amount;else if(p.mode==='income')a.pending+=p.amount;

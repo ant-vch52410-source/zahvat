@@ -357,6 +357,20 @@ fieldset input { width: 22px; height: 22px; }
   background: var(--card);
   box-shadow: 0 3px 10px #0005;
 }
-.purchase-actions button { border: 0; color: var(--red); padding: 3px 9px; min-height: 28px; }
+.purchase-actions button { display: block; width: 100%; text-align: left; border: 0; padding: 3px 9px; min-height: 28px; white-space: nowrap; }
+.purchase-actions .purchase-remove { color: var(--red); }
+#planFactDialog { width: min(320px, calc(100% - 24px)); background: var(--card); padding: 8px 10px 10px; }
+.fact-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.fact-head h2 { margin: 0; font-size: 15px; }
+#planFactCancel { width: 28px; height: 28px; padding: 0; border: 0; color: var(--muted); font-size: 20px; line-height: 1; }
+.fact-details { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 3px 8px; margin: 2px 0 7px; font-size: 12px; }
+.fact-details strong { overflow-wrap: anywhere; }
+.fact-details small { color: var(--muted); white-space: nowrap; font-size: 11px; }
+.fact-fields { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 7px; }
+.fact-fields label { display: grid; gap: 3px; min-width: 0; color: var(--muted); font-size: 11px; }
+.fact-fields input, .fact-fields button { height: 34px; min-height: 34px; padding: 3px 8px; }
+.fact-fields input { min-width: 0; width: 100%; color: var(--text); font-size: 16px; }
+.fact-fields input[aria-invalid="true"] { border-color: var(--red); }
+.fact-fields button { font-size: 12px; white-space: nowrap; }
 .purchase-undo { flex: none; min-height: 24px; padding: 2px 5px; font-size: 11px; color: var(--accent); }
 #phonePlanView .footer { flex-wrap: wrap; }

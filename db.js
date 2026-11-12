@@ -91,14 +91,50 @@ export const putState = (list, settings = {}) => tx(['entries','settings'], 'rea
   for(const [key,value] of Object.entries(settings))values.put(value,key);
 });
 
+const pendingPurchaseFact=row=>row.payload?.v===4&&row.payload.purchase&&!['received','rejected'].includes(row.delivery);
+
+/** Связать расход с текущей записью и исключить параллельные отправки из двух вкладок. */
+export async function savePurchaseFact(entry, origin){
+  const db=await openDb();
+  await new Promise((resolve,reject)=>{
+    const transaction=db.transaction('entries','readwrite');
+    const store=transaction.objectStore('entries');
+    let refusal;
+    transaction.oncomplete=()=>resolve();
+    transaction.onabort=()=>reject(refusal||transaction.error||new Error('Расход не сохранён.'));
+    const request=store.getAll();
+    request.onsuccess=()=>{
+      const target=entry.payload.purchase;
+      const current=request.result.find(row=>row.id===target.captureId);
+      if(target.captureId&&(current?.updatedAt!==target.captureRevision||current.payload?.planned!==true)){
+        refusal=new Error('Покупка изменилась. Откройте её заново.');
+      }else if(request.result.some(row=>{
+        if(!pendingPurchaseFact(row))return false;
+        const purchase=row.payload.purchase;
+        return purchase&&((target.id&&purchase.id===target.id)||(origin.captureId&&purchase.captureId===origin.captureId));
+      })){
+        refusal=new Error('Расход по этой покупке уже ждёт ПК.');
+      }
+      if(refusal)transaction.abort();else store.add(entry);
+    };
+  });
+}
+
 /** Сохранение либо удаление с проверкой отправки в той же транзакции (задача 36.3). */
 function changeCapture(id,entry){
   return openDb().then(db=>new Promise((resolve,reject)=>{
-    const t=db.transaction('entries','readwrite'),store=t.objectStore('entries');let blocked=false;
-    t.oncomplete=()=>resolve();t.onerror=()=>reject(t.error);t.onabort=()=>reject(blocked?new Error('Запись уже передана'):t.error);
+    const t=db.transaction('entries','readwrite'),store=t.objectStore('entries');let refusal;
+    t.oncomplete=()=>resolve();t.onerror=()=>reject(t.error);t.onabort=()=>reject(refusal||t.error);
+    const change=()=>{if(entry)store.put(entry);else store.delete(id);};
     const req=store.get(id);req.onsuccess=()=>{
-      const old=req.result;if(old&&(old.cloudRevision||old.cloudSending)){blocked=true;t.abort();return;}
-      if(entry)store.put(entry);else store.delete(id);
+      const old=req.result;
+      if(old&&(old.cloudRevision||old.cloudSending)){refusal=new Error('Запись уже передана');t.abort();return;}
+      if(old?.payload?.planned!==true){change();return;}
+      const rows=store.getAll();rows.onsuccess=()=>{
+        const pending=rows.result.some(row=>pendingPurchaseFact(row)&&row.payload.purchase.captureId===id&&row.payload.purchase.captureRevision===old.updatedAt);
+        if(pending){refusal=new Error('Расход по этой покупке ждёт ПК.');t.abort();}
+        else change();
+      };
     };
   }));
 }

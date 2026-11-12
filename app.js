@@ -13,12 +13,12 @@ import {
 } from './core.js';
 import {PhonePlan} from './plan.js';
 import {DriveExchange} from './sync.js';
-import {adjustedBalances,isLocked,isFinancial} from './sync-core.js';
+import {adjustedBalances,isLocked,isFinancial,isPurchaseFact} from './sync-core.js';
 import { Dictation } from './speech.js';
 import { CaptureForm, SECTIONS, recordKind, recordText } from './capture.js';
 
 /** Версия программы — показывается в меню; поднимается вместе с VERSION в sw.js. */
-const APP_VERSION = '9.5.1';
+const APP_VERSION = '9.5.2';
 const $ = (id) => document.getElementById(id);
 const ui = {
   text: $('text'), interim: $('interim'), mic: $('btnMic'), save: $('btnSave'), clear: $('btnClear'), status: $('status'),
@@ -47,7 +47,7 @@ const NOTE_TAG = 'Заметка';             // запись без выбра
 const KNOWN_TAGS = ['Финансы', 'Идеи', 'Мысли', 'Заметка', 'Идея', 'Задача', 'Время', 'Работа', RECEIPT_TAG];
 
 const drive=new DriveExchange(refreshDrive);
-const phonePlan=new PhonePlan(drive,()=>entries,{options:purchaseOptions,create:savePlanPurchase});
+const phonePlan=new PhonePlan(drive,()=>entries,{options:purchaseOptions,create:savePlanPurchase,record:savePlanFact});
 let entries = [];          // все записи в памяти (их немного, так проще и быстрее)
 let draftVoice = false;    // в текущем тексте есть надиктованное → источник 'voice'
 let editingId = null;      // какую запись сейчас правим (в «Все записи»)
@@ -158,10 +158,10 @@ async function loadLists(file) {
     if(data.app==='zahvat-drive'){await drive.connect(data);showToast('Google Диск подключён.');return;}
     if(data.app==='zahvat-receipt'&&data.v===1&&Array.isArray(data.records)){
       const byId=new Map(data.records.filter(r=>r&&typeof r.id==='string').map(r=>[r.id,r]));
-      const changed=entries.map(e=>{const r=byId.get(e.id);if(!r||!['received','waiting'].includes(r.status)||!e.exportedAt)return e;
+      const changed=entries.map(e=>{const r=byId.get(e.id);if(!r||!['received','waiting','rejected'].includes(r.status)||!e.exportedAt)return e;
         if(r.revision!==e.updatedAt)return e;
         return {...e,delivery:r.status,deliveryError:r.error||''};});
-      await db.putEntries(changed);entries=changed;render();showToast('Результаты приёма обновлены.');return;
+      await db.putEntries(changed);entries=changed;render();await phonePlan.refresh();showToast('Результаты приёма обновлены.');return;
     }
     if(data.app!=='zahvat-catalog'||data.v!==1||!Array.isArray(data.accounts)||!Array.isArray(data.articles))throw new Error('Неизвестный файл справочников.');
     const listKeys=['accounts','articles','clients','projects','folders','activities','workClients'];
@@ -273,6 +273,7 @@ async function saveEntry() {
   catch(error){captureForm.error(error.message);return;}
   const text=recordText(payload),now=Date.now();
   const original=structuredEditing;
+  if(original&&hasPendingPurchaseFact(original)){showToast('Расход по этой покупке ждёт ПК.');return;}
   const entry={id:original?.id||newId(),ts:original?.ts||now,createdAt:original?.createdAt||now,updatedAt:now,text,payload,source:draftVoice?'voice':'text',exportedAt:null};
   structuredEditing=null;
   // Поле сбрасываем сразу: если начать следующую запись, пока идёт запись в базу, она не пропадёт
@@ -302,6 +303,21 @@ async function savePlanPurchase(payload){
   const now=Date.now(),entry={id:newId(),ts:now,createdAt:now,updatedAt:now,text:recordText(payload),payload,source:'text',exportedAt:null};
   await db.putState([entry],{phonePurchaseDraft:null});entries.push(entry);render();drive.schedule(true);
   return entry;
+}
+
+/** Расход хранится отдельной записью с неизменяемой ссылкой на покупку до квитанции ПК. */
+async function savePlanFact(payload,purchase){
+  const now=Date.now(),entry={id:newId(),ts:now,createdAt:now,updatedAt:now,text:recordText(payload),payload,source:'text',exportedAt:null};
+  await db.savePurchaseFact(entry,purchase);
+  entries.push(entry);
+  render();drive.schedule(true);
+  showToast('Расход сохранён на телефоне · ждёт ПК');
+}
+
+function hasPendingPurchaseFact(entry){
+  return entry.payload?.planned===true&&entries.some(fact=>isPurchaseFact(fact)&&
+    fact.payload.purchase?.captureId===entry.id&&fact.payload.purchase.captureRevision===entry.updatedAt&&
+    !['received','rejected'].includes(fact.delivery));
 }
 
 /** «Стереть»: очистить поле, сумму, статью и метку; можно вернуть из сообщения. */
@@ -353,11 +369,14 @@ function renderRecent() {
     const b = document.createElement('button');
     b.type = 'button';
     b.dataset.id = e.id;
-    b.setAttribute('aria-label', `${formatTime(e.ts)}: ${e.text}. Нажмите, чтобы изменить`);
+    const status=isPurchaseFact(e)?({received:'Принято на ПК',rejected:'Отклонено ПК'}[e.delivery]||'Расход ждёт ПК'):'';
+    b.setAttribute('aria-label', `${formatTime(e.ts)}: ${e.text}. ${status||'Нажмите, чтобы изменить'}`);
     const time = document.createElement('span');
     time.className = 'time';
     time.textContent = formatTime(e.ts);
-    const preview=document.createElement('span');preview.className='txt';preview.append(entryText(e));b.append(time,preview);
+    const preview=document.createElement('span');preview.className='txt';preview.append(entryText(e));
+    if(status){preview.append(' · '+status);b.title=e.deliveryError||status;}
+    b.append(time,preview);
     li.append(b);
     ui.recent.append(li);
   }
@@ -422,12 +441,12 @@ function entryItem(e) {
   const kind=recordKind(e), symbol={time:'clock',receipt:'qr'}[kind]||kind;
   src.innerHTML=`<svg aria-hidden="true"><use href="#${symbol}"/></svg>`;
   const txt=document.createElement('span');txt.className='txt';const title=document.createElement('span');title.className='entry-title';
-  const p=e.payload, money=p?.amount?(p.amount/100).toLocaleString('ru-RU')+' ₽':'';
+  const p=e.payload, purchaseFact=isPurchaseFact(e), money=p?.amount?(p.amount/100).toLocaleString('ru-RU',{minimumFractionDigits:p.amount%100?2:0})+' ₽':'';
   if(kind==='receipt')title.append(entryText(e));
-  else title.textContent=p?.kind==='finance'?(p.planned?p.text:p.mode==='transfer'?p.account+' → '+p.to_account:p.article)+(money?' · '+money:''):(p?.text||splitTag(e.text,KNOWN_TAGS).rest||e.text);
+  else title.textContent=p?.kind==='finance'?(p.planned||purchaseFact?p.text:p.mode==='transfer'?p.account+' → '+p.to_account:p.article)+(money?' · '+money:''):(p?.text||splitTag(e.text,KNOWN_TAGS).rest||e.text);
   const meta=document.createElement('span');meta.className='meta';
   const detail=p?.kind==='finance'?[p.planned?'План':p.account,{expense:'Расход',income:'Доход',transfer:'Перевод'}[p.mode]]:[p?.client?.name,p?.project?.name,p?.folder?.name];
-  meta.textContent=[...detail,({received:'Принято на ПК',waiting:'Требует внимания'}[e.delivery]||(e.cloudRevision?'На Диске · ждёт ПК':e.cloudSending?'Ожидает подтверждения Диска':e.exportedAt?'Выгружено':'Новое'))].filter(Boolean).join(' · ');if(e.deliveryError)meta.title=e.deliveryError;
+  meta.textContent=[...detail,({received:'Принято на ПК',waiting:'Требует внимания',rejected:'Отклонено ПК'}[e.delivery]||(e.cloudRevision?'На Диске · ждёт ПК':e.cloudSending?'Ожидает подтверждения Диска':e.exportedAt?'Выгружено':'Новое'))].filter(Boolean).join(' · ');if(e.deliveryError)meta.title=e.deliveryError;
   const time=document.createElement('span');time.className='time';time.textContent=formatTime(e.ts);time.title=formatLocal(e.ts);
   txt.append(title,meta);b.append(src,txt,time);li.append(b);return li;
 }
@@ -455,7 +474,7 @@ function editorItem(e) {
     button('Удалить', 'danger', () => removeEntry(e)),
     button('Отмена', '', () => { editingId = null; render(); }),
   );
-  if(e.payload)row.prepend(button('Изменить поля','',()=>editStructured(e)));
+  if(e.payload&&!isPurchaseFact(e))row.prepend(button('Изменить поля','',()=>editStructured(e)));
   if(recordKind(e)==='idea')row.append(button('В задачу','',()=>{if(ui.text.value.trim()||amount){showToast('Сначала сохраните текущий черновик.');return;}closeAll();setTag('Задача');ui.text.value=e.payload?.text||e.text.replace(/^Иде[яи]:\s*/, '');saveDraftSoon();updateSaveButton();}));
   li.append(ta, meta, row);
   queueMicrotask(() => { ta.focus(); li.scrollIntoView({ block: 'nearest' }); });
@@ -473,6 +492,7 @@ function button(label, cls, onClick) {
 
 function editStructured(e){
   if(ui.text.value.trim()||amount){showToast('Сначала сохраните текущий черновик.');return;}
+  if(hasPendingPurchaseFact(e)){showToast('Расход по этой покупке ждёт ПК.');return;}
   if(isLocked(e)){showToast('Запись уже передана. Исправьте её в Органайзере, чтобы не создавать расхождения.');return;}
   const p=e.payload;closeAll();structuredEditing=e;
   setTag({finance:null,task:'Задача',note:'Заметка',idea:'Идея',time:'Время',work:'Работа'}[p.kind]);
@@ -495,6 +515,7 @@ async function updateEntry(e, newText) {
 }
 
 async function removeEntry(e) {
+  if(hasPendingPurchaseFact(e)){showToast('Расход по этой покупке ждёт ПК.');return;}
   if(isFinancialLocked(e)){showToast('Запись уже передана. Исправьте её в Органайзере.');return;}
   try{await db.removeCapture(e.id);}catch{showToast('Запись уже передана. Исправьте её в Органайзере.');return;}
   entries = entries.filter(x => x.id !== e.id);
